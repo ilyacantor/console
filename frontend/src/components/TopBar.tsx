@@ -27,15 +27,16 @@ export default function TopBar() {
 
   return (
     <div
-      className="flex items-center justify-between flex-shrink-0 bg-white"
+      className="flex items-center justify-between flex-shrink-0"
       style={{
         height: '44px',
         padding: '0 14px',
-        borderBottom: '0.5px solid #E0E0E0',
+        background: 'var(--bg-surface)',
+        borderBottom: '0.5px solid var(--border)',
       }}
     >
       {/* Left: Logo */}
-      <div style={{ fontWeight: 700, fontSize: '16px', color: '#1a1a1a' }}>
+      <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-primary)' }}>
         AOS Console
       </div>
 
@@ -46,10 +47,10 @@ export default function TopBar() {
         style={{
           fontSize: '12px',
           padding: '4px 8px',
-          border: '0.5px solid #E0E0E0',
+          border: '0.5px solid var(--border)',
           borderRadius: '6px',
-          background: '#fff',
-          color: '#333',
+          background: 'var(--bg-card)',
+          color: 'var(--text-primary)',
           cursor: 'pointer',
           outline: 'none',
         }}
@@ -68,7 +69,7 @@ export default function TopBar() {
           fontSize: '12px',
           color: health?.overall === 'healthy' ? '#22C55E'
             : health?.overall === 'degraded' ? '#F59E0B'
-            : '#999',
+            : 'var(--text-muted)',
         }}
       >
         {healthText}

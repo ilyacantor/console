@@ -11,8 +11,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app import config, db
+from backend.app.routes.engagements import router as engagements_router
 from backend.app.routes.health import router as health_router
 from backend.app.routes.pipeline import router as pipeline_router
+from backend.app.routes.proxy import router as proxy_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +58,8 @@ app.add_middleware(
 # Routes
 app.include_router(health_router, prefix="/api", tags=["Health"])
 app.include_router(pipeline_router, prefix="/api/pipeline", tags=["Pipeline"])
+app.include_router(proxy_router, prefix="/api/proxy", tags=["Proxy"])
+app.include_router(engagements_router, prefix="/api/engagements", tags=["Engagements"])
 
 
 @app.get("/health")

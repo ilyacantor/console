@@ -57,10 +57,11 @@ const NAV: NavSection[] = [
 export default function Sidebar() {
   return (
     <nav
-      className="flex-shrink-0 overflow-y-auto bg-white"
+      className="flex-shrink-0 overflow-y-auto"
       style={{
         width: '180px',
-        borderRight: '0.5px solid #E0E0E0',
+        background: 'var(--bg-surface)',
+        borderRight: '0.5px solid var(--border)',
         padding: '12px 0',
       }}
     >
@@ -70,7 +71,7 @@ export default function Sidebar() {
             style={{
               fontSize: '11px',
               fontWeight: 600,
-              color: '#999',
+              color: 'var(--text-muted)',
               textTransform: 'uppercase',
               letterSpacing: '0.5px',
               padding: '0 14px',
@@ -91,7 +92,7 @@ export default function Sidebar() {
                   padding: '4px 14px',
                   paddingLeft: item.indent ? '28px' : '14px',
                   fontSize: '13px',
-                  color: '#666',
+                  color: 'var(--text-secondary)',
                   textDecoration: 'none',
                 }}
               >
@@ -115,9 +116,9 @@ export default function Sidebar() {
                   padding: '4px 14px',
                   paddingLeft: item.indent ? '28px' : '14px',
                   fontSize: '13px',
-                  color: isActive ? '#1a1a1a' : '#666',
+                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
                   fontWeight: isActive ? 600 : 400,
-                  background: isActive ? '#F0F0F0' : 'transparent',
+                  background: isActive ? 'var(--bg-hover)' : 'transparent',
                   textDecoration: 'none',
                   display: 'flex',
                   alignItems: 'center',

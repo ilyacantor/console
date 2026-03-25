@@ -32,7 +32,7 @@ const STATUS_COLOR: Record<string, string> = {
   success: '#22C55E',
   failed: '#EF4444',
   running: '#F59E0B',
-  pending: '#999',
+  pending: '#555',
 }
 
 function formatDuration(s: number | null): string {
@@ -46,7 +46,7 @@ function formatTriples(n: number | null): string {
 }
 
 function deltaPercent(actual: number | null, baseline: number | null): { text: string; color: string } {
-  if (actual == null || baseline == null || baseline === 0) return { text: '—', color: '#999' }
+  if (actual == null || baseline == null || baseline === 0) return { text: '—', color: 'var(--text-muted)' }
   const pct = ((actual - baseline) / baseline) * 100
   const color = pct <= 0 ? '#22C55E' : pct <= 10 ? '#F59E0B' : '#EF4444'
   const sign = pct > 0 ? '+' : ''
@@ -59,7 +59,7 @@ function progressBarWidth(actual: number | null, baseline: number | null): numbe
 }
 
 function progressBarColor(actual: number | null, baseline: number | null): string {
-  if (actual == null || baseline == null || baseline === 0) return '#E0E0E0'
+  if (actual == null || baseline == null || baseline === 0) return '#333'
   return actual <= baseline ? '#3B82F6' : '#EF4444'
 }
 
@@ -169,10 +169,10 @@ export default function Pipeline() {
                 style={{
                   fontSize: '12px',
                   padding: '5px 14px',
-                  border: '0.5px solid #E0E0E0',
+                  border: '0.5px solid var(--border)',
                   borderRadius: '8px',
-                  background: mode === m ? '#3B82F6' : '#fff',
-                  color: mode === m ? '#fff' : '#333',
+                  background: mode === m ? '#3B82F6' : 'var(--bg-card)',
+                  color: mode === m ? '#fff' : 'var(--text-secondary)',
                   cursor: 'pointer',
                   fontWeight: mode === m ? 600 : 400,
                 }}
@@ -219,12 +219,12 @@ export default function Pipeline() {
       {error && (
         <div
           style={{
-            background: '#FEF2F2',
+            background: '#2A1515',
             border: '0.5px solid #EF4444',
             borderRadius: '8px',
             padding: '8px 12px',
             fontSize: '12px',
-            color: '#991B1B',
+            color: '#FCA5A5',
             marginBottom: '14px',
           }}
         >
@@ -242,8 +242,8 @@ export default function Pipeline() {
       {/* Merged run + baseline table */}
       <div
         style={{
-          background: '#fff',
-          border: '0.5px solid #E0E0E0',
+          background: 'var(--bg-card)',
+          border: '0.5px solid var(--border)',
           borderRadius: '12px',
           padding: '14px',
           marginBottom: '14px',
@@ -252,7 +252,7 @@ export default function Pipeline() {
       >
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid #F0F0F0' }}>
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
               <th style={thStyle}></th>
               <th style={{ ...thStyle, textAlign: 'left' }}>Step</th>
               <th style={thStyle}>Duration</th>
@@ -271,7 +271,7 @@ export default function Pipeline() {
               const barColor = progressBarColor(step.duration_s, baseline)
 
               return (
-                <tr key={step.name} style={{ borderBottom: '1px solid #F8F8F8' }}>
+                <tr key={step.name} style={{ borderBottom: '1px solid #222' }}>
                   <td style={{ ...tdStyle, width: '24px', textAlign: 'center' }}>
                     <span style={{ color: STATUS_COLOR[step.status] ?? '#999' }}>
                       {STATUS_ICON[step.status] ?? '?'}
@@ -291,7 +291,7 @@ export default function Pipeline() {
                     <div
                       style={{
                         height: '6px',
-                        background: '#F0F0F0',
+                        background: '#252525',
                         borderRadius: '3px',
                         overflow: 'hidden',
                       }}
@@ -319,9 +319,11 @@ export default function Pipeline() {
                           width: '50px',
                           fontSize: '11px',
                           padding: '2px 4px',
-                          border: '0.5px solid #E0E0E0',
+                          border: '0.5px solid var(--border)',
                           borderRadius: '4px',
                           textAlign: 'center',
+                          background: 'var(--bg-hover)',
+                          color: 'var(--text-primary)',
                         }}
                       />
                     ) : '—'}
@@ -334,7 +336,7 @@ export default function Pipeline() {
             })}
             {/* Total row */}
             {currentRun && (
-              <tr style={{ borderTop: '2px solid #E0E0E0' }}>
+              <tr style={{ borderTop: '2px solid var(--border)' }}>
                 <td style={tdStyle}></td>
                 <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 700 }}>Total</td>
                 <td style={{ ...tdStyle, fontWeight: 700 }}>
@@ -353,7 +355,7 @@ export default function Pipeline() {
                       <div
                         style={{
                           height: '6px',
-                          background: '#F0F0F0',
+                          background: '#252525',
                           borderRadius: '3px',
                           overflow: 'hidden',
                         }}
@@ -383,9 +385,11 @@ export default function Pipeline() {
                       width: '50px',
                       fontSize: '11px',
                       padding: '2px 4px',
-                      border: '0.5px solid #E0E0E0',
+                      border: '0.5px solid var(--border)',
                       borderRadius: '4px',
                       textAlign: 'center',
+                      background: 'var(--bg-hover)',
+                      color: 'var(--text-primary)',
                     }}
                   />
                 </td>
@@ -401,7 +405,7 @@ export default function Pipeline() {
           </tbody>
         </table>
         {displaySteps.length === 0 && (
-          <div style={{ textAlign: 'center', color: '#999', padding: '20px', fontSize: '12px' }}>
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px', fontSize: '12px' }}>
             No pipeline run yet. Click Run to start.
           </div>
         )}
@@ -410,8 +414,8 @@ export default function Pipeline() {
       {/* Run history */}
       <div
         style={{
-          background: '#fff',
-          border: '0.5px solid #E0E0E0',
+          background: 'var(--bg-card)',
+          border: '0.5px solid var(--border)',
           borderRadius: '12px',
           padding: '14px',
         }}
@@ -420,11 +424,11 @@ export default function Pipeline() {
           Run History
         </h2>
         {runs.length === 0 ? (
-          <div style={{ color: '#999', fontSize: '12px' }}>No runs yet.</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No runs yet.</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid #F0F0F0' }}>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 <th style={{ ...thStyle, textAlign: 'left' }}>Run ID</th>
                 <th style={thStyle}>Mode</th>
                 <th style={thStyle}>Duration</th>
@@ -464,7 +468,7 @@ function RunRow({
     <>
       <tr
         onClick={onToggle}
-        style={{ borderBottom: '1px solid #F8F8F8', cursor: 'pointer' }}
+        style={{ borderBottom: '1px solid #222', cursor: 'pointer' }}
       >
         <td style={{ ...tdStyle, textAlign: 'left', fontFamily: 'monospace', fontSize: '11px' }}>
           {run.run_id.slice(0, 8)}
@@ -477,8 +481,8 @@ function RunRow({
               borderRadius: '4px',
               fontSize: '10px',
               fontWeight: 600,
-              background: run.mode === 'ME' ? '#F3E8FF' : '#DBEAFE',
-              color: run.mode === 'ME' ? '#7C3AED' : '#3B82F6',
+              background: run.mode === 'ME' ? '#2E1A47' : '#1A2A47',
+              color: run.mode === 'ME' ? '#A78BFA' : '#60A5FA',
             }}
           >
             {run.mode}
@@ -492,8 +496,8 @@ function RunRow({
                 marginLeft: '4px',
                 borderRadius: '3px',
                 fontSize: '10px',
-                background: '#F5F5F0',
-                color: '#666',
+                background: 'var(--bg-hover)',
+                color: 'var(--text-secondary)',
               }}
             >
               {e}
@@ -510,8 +514,8 @@ function RunRow({
               borderRadius: '4px',
               fontSize: '10px',
               fontWeight: 600,
-              background: run.status === 'pass' ? '#DCFCE7' : '#FEE2E2',
-              color: run.status === 'pass' ? '#166534' : '#991B1B',
+              background: run.status === 'pass' ? '#14332A' : '#2A1515',
+              color: run.status === 'pass' ? '#4ADE80' : '#FCA5A5',
             }}
           >
             {run.status}
@@ -520,11 +524,11 @@ function RunRow({
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={5} style={{ padding: '8px 14px', background: '#FAFAFA' }}>
+          <td colSpan={5} style={{ padding: '8px 14px', background: 'var(--bg-hover)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
               <tbody>
                 {run.steps.map((step: PipelineStep) => (
-                  <tr key={step.name} style={{ borderBottom: '1px solid #F0F0F0' }}>
+                  <tr key={step.name} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '4px 8px', width: '24px' }}>
                       <span style={{ color: STATUS_COLOR[step.status] ?? '#999' }}>
                         {STATUS_ICON[step.status] ?? '?'}
@@ -552,7 +556,7 @@ const thStyle: React.CSSProperties = {
   padding: '6px 8px',
   fontSize: '11px',
   fontWeight: 600,
-  color: '#999',
+  color: 'var(--text-muted)',
   textAlign: 'center',
   textTransform: 'uppercase',
 }

@@ -20,8 +20,8 @@ export default function HealthStrip({ services }: Props) {
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
-            background: '#fff',
-            border: '0.5px solid #E0E0E0',
+            background: 'var(--bg-card)',
+            border: '0.5px solid var(--border)',
             borderRadius: '12px',
             padding: '6px 12px',
           }}
@@ -35,8 +35,8 @@ export default function HealthStrip({ services }: Props) {
               flexShrink: 0,
             }}
           />
-          <span style={{ fontSize: '11px', color: '#666' }}>{svc.name}</span>
-          <span style={{ fontSize: '11px', color: '#999' }}>
+          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{svc.name}</span>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
             {svc.response_time_s != null ? `${svc.response_time_s}s` : '—'}
           </span>
           {svc.standalone_url && (

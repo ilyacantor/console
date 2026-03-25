@@ -4,13 +4,13 @@ import TopBar from './TopBar'
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen" style={{ background: 'var(--bg-base)' }}>
       <TopBar />
       <div className="flex flex-1 min-h-0">
         <Sidebar />
         <main
           className="flex-1 overflow-auto"
-          style={{ background: '#F5F5F0', padding: '14px' }}
+          style={{ background: 'var(--bg-base)', padding: '14px' }}
         >
           {children}
         </main>
@@ -30,7 +30,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           fontWeight: 700,
           fontSize: '16px',
           border: 'none',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
         }}
         title="Maestra (coming soon)"
       >

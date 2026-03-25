@@ -93,3 +93,55 @@ export function updateBaselines(baselines: Baselines): Promise<{ status: string 
     body: JSON.stringify(baselines),
   })
 }
+
+// Engagements
+export interface Engagement {
+  engagement_id: string
+  entity_ids: string[]
+  engagement_type: string
+  lifecycle_stage: string
+  state_json: Record<string, unknown>
+  created_at: string | null
+  updated_at: string | null
+}
+
+export function fetchEngagements(): Promise<{ engagements: Engagement[] }> {
+  return fetchJSON('/api/engagements')
+}
+
+export function fetchEngagement(id: string): Promise<Engagement> {
+  return fetchJSON(`/api/engagements/${id}`)
+}
+
+export function updateEngagement(
+  id: string,
+  data: { lifecycle_stage?: string; state_json?: Record<string, unknown> },
+): Promise<Engagement> {
+  return fetchJSON(`/api/engagements/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  })
+}
+
+// DCL proxy — routes through console backend to avoid CORS
+export function fetchDclContext(): Promise<unknown> {
+  return fetchJSON('/api/proxy/dcl/api/dcl/contextualization-summary')
+}
+
+export function fetchDclTriplesOverview(): Promise<unknown> {
+  return fetchJSON('/api/proxy/dcl/api/dcl/triples/overview')
+}
+
+export function fetchDclCofaAdjustments(): Promise<unknown> {
+  return fetchJSON('/api/proxy/dcl/api/dcl/reports/v2/cofa-adjustments')
+}
+
+export function fetchDclCombiningIncomeStatement(
+  period = '2025-Q1',
+): Promise<unknown> {
+  return fetchJSON(`/api/proxy/dcl/api/dcl/reports/v2/combining/income-statement?period=${period}`)
+}
+
+export function fetchDclBridge(): Promise<unknown> {
+  return fetchJSON('/api/proxy/dcl/api/dcl/reports/v2/bridge')
+}
