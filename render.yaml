@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: aos-console
+    runtime: python
+    region: oregon
+    plan: starter
+    branch: dev
+    buildCommand: cd frontend && npm ci && npm run build && cd .. && pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: FARM_BASE_URL
+        sync: false
+      - key: AOD_BASE_URL
+        sync: false
+      - key: AAM_BASE_URL
+        sync: false
+      - key: DCL_BASE_URL
+        sync: false
+      - key: NLQ_BASE_URL
+        sync: false
+      - key: PLATFORM_BASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
