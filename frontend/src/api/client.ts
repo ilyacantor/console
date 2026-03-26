@@ -326,6 +326,22 @@ export function fetchInstrumentationSummary(engagementId?: string): Promise<Inst
   return fetchJSON(`/api/instrumentation/summary${qs}`)
 }
 
+// Conflicts
+export interface Conflict {
+  id: string
+  engagement_id: string
+  name: string
+  impact_dollars: number
+  impact_label: string
+  severity: 'high' | 'medium' | 'low'
+  status: 'pending' | 'resolved'
+  treatment: string | null
+}
+
+export function fetchConflicts(engagementId: string): Promise<{ conflicts: Conflict[] }> {
+  return fetchJSON(`/api/engagements/${engagementId}/conflicts`)
+}
+
 // Narrative
 export interface NarrativeStep {
   id: string

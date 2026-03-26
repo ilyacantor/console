@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchEngagements, createEngagement, fetchRuns, fetchEngagementHistory, type Engagement, type EngagementHistoryEvent } from '../api/client'
+import { useEngagement } from '../context/EngagementContext'
 
 function TypePill({ type }: { type: string }) {
   const colors: Record<string, { bg: string; text: string }> = {
@@ -43,6 +44,7 @@ function timeAgo(dateStr: string | null): string {
 }
 
 export default function Engagements() {
+  const { activeEngagement, setActiveEngagement, refresh: refreshContext } = useEngagement()
   const [engagements, setEngagements] = useState<Engagement[]>([])
   const [selected, setSelected] = useState<Engagement | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -113,6 +115,7 @@ export default function Engagements() {
       setNewAcquirer('')
       setNewTarget('')
       load()
+      refreshContext()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create engagement')
     }
@@ -217,8 +220,16 @@ export default function Engagements() {
             {engagements.map((e) => (
               <tr
                 key={e.engagement_id}
-                onClick={() => setSelected(selected?.engagement_id === e.engagement_id ? null : e)}
-                style={{ cursor: 'pointer', borderBottom: '0.5px solid var(--border)', background: selected?.engagement_id === e.engagement_id ? 'var(--bg-hover)' : 'transparent' }}
+                onClick={() => {
+                  setSelected(selected?.engagement_id === e.engagement_id ? null : e)
+                  setActiveEngagement(e)
+                }}
+                style={{
+                  cursor: 'pointer',
+                  borderBottom: '0.5px solid var(--border)',
+                  background: selected?.engagement_id === e.engagement_id ? 'var(--bg-hover)' : 'transparent',
+                  borderLeft: e.engagement_id === activeEngagement?.engagement_id ? '3px solid #3B82F6' : '3px solid transparent',
+                }}
               >
                 <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '11px', color: 'var(--text-muted)' }}>{e.engagement_id.slice(0, 8)}</td>
                 <td style={{ padding: '8px', color: 'var(--text-primary)' }}>{e.acquirer_entity_id}</td>

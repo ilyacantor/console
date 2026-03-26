@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { uploadFile, proceedUpload, fetchEngagements, type UploadResult, type Engagement } from '../api/client'
+import { uploadFile, proceedUpload, type UploadResult } from '../api/client'
+import { useEngagement } from '../context/EngagementContext'
+import { capitalize } from '../utils/format'
 
 interface PanelFile {
   upload: UploadResult | null
@@ -160,8 +162,7 @@ function DropPanel({
 }
 
 export default function Upload() {
-  const [engagements, setEngagements] = useState<Engagement[]>([])
-  const [activeEngagement, setActiveEngagement] = useState<Engagement | null>(null)
+  const { activeEngagement } = useEngagement()
   const [acquirerFile, setAcquirerFile] = useState<PanelFile>({ upload: null, uploading: false, error: null })
   const [targetFile, setTargetFile] = useState<PanelFile>({ upload: null, uploading: false, error: null })
   const [intakeStep, setIntakeStep] = useState(-1)
@@ -170,14 +171,15 @@ export default function Upload() {
   const [proceeding, setProceeding] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Reset state when engagement changes
   useEffect(() => {
-    fetchEngagements()
-      .then(({ engagements: e }) => {
-        setEngagements(e)
-        if (e.length > 0) setActiveEngagement(e[0])
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load engagements'))
-  }, [])
+    setAcquirerFile({ upload: null, uploading: false, error: null })
+    setTargetFile({ upload: null, uploading: false, error: null })
+    setIntakeStep(-1)
+    setIntakeStatuses(INTAKE_STEPS.map(() => 'pending'))
+    setIntakeDurations(INTAKE_STEPS.map(() => null))
+    setError(null)
+  }, [activeEngagement?.engagement_id])
 
   const acquirerEntityId = activeEngagement?.acquirer_entity_id || ''
   const targetEntityId = activeEngagement?.target_entity_id || ''
@@ -253,26 +255,9 @@ export default function Upload() {
     <div style={{ padding: '24px', maxWidth: '960px' }}>
       <h1 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Upload</h1>
 
-      {engagements.length > 1 && (
-        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Engagement:</span>
-          <select
-            value={activeEngagement?.engagement_id || ''}
-            onChange={(e) => setActiveEngagement(engagements.find((eng) => eng.engagement_id === e.target.value) || null)}
-            style={{ padding: '4px 8px', fontSize: '12px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--bg)', color: 'var(--text-primary)' }}
-          >
-            {engagements.map((eng) => (
-              <option key={eng.engagement_id} value={eng.engagement_id}>
-                {eng.acquirer_entity_id} + {eng.target_entity_id}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
       <div style={{ display: 'flex', gap: '24px', marginBottom: '24px' }}>
         <DropPanel
-          label="Acquirer"
+          label={activeEngagement ? `${capitalize(activeEngagement.acquirer_entity_id)} (Acquirer)` : 'Acquirer'}
           color="#3B82F6"
           entityId={acquirerEntityId}
           engagementId={activeEngagement?.engagement_id}
@@ -280,7 +265,7 @@ export default function Upload() {
           onUploaded={(r) => setAcquirerFile({ upload: r, uploading: false, error: null })}
         />
         <DropPanel
-          label="Target"
+          label={activeEngagement ? `${capitalize(activeEngagement.target_entity_id)} (Target)` : 'Target'}
           color="#F59E0B"
           entityId={targetEntityId}
           engagementId={activeEngagement?.engagement_id}

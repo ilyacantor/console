@@ -63,6 +63,16 @@ async def get_engagement_history(engagement_id: str, limit: int = 50):
     return {"events": events}
 
 
+@router.get("/{engagement_id}/conflicts")
+async def get_engagement_conflicts(engagement_id: str):
+    """Get COFA conflicts scoped to an engagement."""
+    existing = await db.get_engagement(engagement_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Engagement {engagement_id} not found")
+    conflicts = await db.get_conflicts(engagement_id)
+    return {"conflicts": conflicts}
+
+
 @router.patch("/{engagement_id}")
 async def update_engagement(engagement_id: str, body: EngagementUpdate):
     """Update engagement lifecycle_stage and/or state_json."""

@@ -6,6 +6,8 @@ import {
 } from '../api/client'
 import { type CofaMergeRow, SEED_COFA_MERGE } from '../data/deal-seed'
 import ModuleIframe from '../components/ModuleIframe'
+import { useEngagement } from '../context/EngagementContext'
+import { capitalize } from '../utils/format'
 
 type Tab = 'coverage' | 'sources' | 'lineage' | 'cofa'
 
@@ -42,6 +44,9 @@ interface OverviewData {
 const DCL_BASE = import.meta.env.VITE_DCL_URL || 'http://localhost:3004'
 
 export default function Inspect() {
+  const { activeEngagement } = useEngagement()
+  const acquirerName = activeEngagement ? capitalize(activeEngagement.acquirer_entity_id) : 'Acquirer'
+  const targetName = activeEngagement ? capitalize(activeEngagement.target_entity_id) : 'Target'
   const [tab, setTab] = useState<Tab>('coverage')
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [overviewError, setOverviewError] = useState<string | null>(null)
@@ -165,7 +170,7 @@ export default function Inspect() {
       {tab === 'coverage' && <CoverageTab domains={overview?.domains ?? []} />}
       {tab === 'sources' && <SourcesTab sources={overview?.sources ?? []} />}
       {tab === 'lineage' && <LineageTab />}
-      {tab === 'cofa' && <CofaTab rows={cofaRows} error={cofaError} />}
+      {tab === 'cofa' && <CofaTab rows={cofaRows} error={cofaError} acquirerName={acquirerName} targetName={targetName} />}
     </div>
   )
 }
@@ -333,7 +338,7 @@ function LineageTab() {
 
 /* --- COFA merge tab --- */
 
-function CofaTab({ rows, error }: { rows: CofaMergeRow[] | null; error: string | null }) {
+function CofaTab({ rows, error, acquirerName, targetName }: { rows: CofaMergeRow[] | null; error: string | null; acquirerName: string; targetName: string }) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null)
   const displayRows = rows ?? SEED_COFA_MERGE
   const usingSeed = !rows
@@ -349,8 +354,8 @@ function CofaTab({ rows, error }: { rows: CofaMergeRow[] | null; error: string |
     <div style={cardStyle}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
         <h2 style={{ fontSize: '13px', fontWeight: 600, margin: 0 }}>COFA merge</h2>
-        <span style={{ ...pillBase, background: '#1A2A47', color: '#60A5FA' }}>Meridian</span>
-        <span style={{ ...pillBase, background: '#332B15', color: '#F59E0B' }}>Cascadia</span>
+        <span style={{ ...pillBase, background: '#1A2A47', color: '#60A5FA' }}>{acquirerName}</span>
+        <span style={{ ...pillBase, background: '#332B15', color: '#F59E0B' }}>{targetName}</span>
       </div>
 
       {error && usingSeed && (
@@ -385,8 +390,8 @@ function CofaTab({ rows, error }: { rows: CofaMergeRow[] | null; error: string |
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border)' }}>
             <th style={thLeft}>Unified account</th>
-            <th style={thLeft}>Meridian account</th>
-            <th style={thLeft}>Cascadia account</th>
+            <th style={thLeft}>{acquirerName} account</th>
+            <th style={thLeft}>{targetName} account</th>
             <th style={thCenter}>Match type</th>
           </tr>
         </thead>

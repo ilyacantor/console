@@ -28,6 +28,8 @@ import Markdown from 'react-markdown';
 import { useMaestraStream } from '../hooks/useMaestraStream';
 import { usePolledData } from '../hooks/usePolledData';
 import { usePageContext, type PageContext } from '../context/MaestraPageContext';
+import { useEngagement } from '../context/EngagementContext';
+import { capitalize } from '../utils/format';
 import MAESTRA_PRESETS from './maestra/presets';
 
 // ---------------------------------------------------------------------------
@@ -118,7 +120,12 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const lastEngagementRef = useRef<MaestraStatusResponse | null>(null);
+  const prevEngIdRef = useRef<string | null>(null);
+
+  // -------------------------------------------------------------------
+  // Engagement context
+  // -------------------------------------------------------------------
+  const { activeEngagement } = useEngagement();
 
   // -------------------------------------------------------------------
   // Page context — injected into API messages, invisible to UI
@@ -155,6 +162,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
     page_context: currentPage,
     session_id: sessionId,
     contextBlock,
+    engagement_id: activeEngagement?.engagement_id,
   });
 
   // -------------------------------------------------------------------
@@ -171,27 +179,25 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
     { enabled: mode !== 'dormant' },
   );
 
-  // Cache last known engagement so pill dot persists after closing
+  // Detect engagement switch from context and inject system message
   useEffect(() => {
-    if (maestraStatus) {
-      const prevId = lastEngagementRef.current?.engagement_id;
-      const newId = maestraStatus.engagement_id;
-      if (prevId && newId && prevId !== newId && messages.length > 0) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'system',
-            content: `Engagement changed: ${newId}`,
-            timestamp: Date.now(),
-          },
-        ]);
-      }
-      lastEngagementRef.current = maestraStatus;
+    const newId = activeEngagement?.engagement_id ?? null;
+    if (prevEngIdRef.current && newId && prevEngIdRef.current !== newId && messages.length > 0) {
+      const name = `${capitalize(activeEngagement!.acquirer_entity_id)} \u2192 ${capitalize(activeEngagement!.target_entity_id)}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `Switched to engagement: ${name}`,
+          timestamp: Date.now(),
+        },
+      ]);
     }
-  }, [maestraStatus, messages.length]);
+    prevEngIdRef.current = newId;
+  }, [activeEngagement?.engagement_id]);
 
-  const hasEngagement = !!(lastEngagementRef.current?.engagement_id);
+  const hasEngagement = !!activeEngagement;
 
   // -------------------------------------------------------------------
   // Mode transitions
@@ -311,11 +317,9 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
   // -------------------------------------------------------------------
   // Engagement label
   // -------------------------------------------------------------------
-  const engagementLabel = lastEngagementRef.current?.entity
-    ? lastEngagementRef.current.entity
-    : lastEngagementRef.current?.engagement_id
-      ? `Engagement ${lastEngagementRef.current.engagement_id.slice(0, 8)}`
-      : null;
+  const engagementLabel = activeEngagement
+    ? `${capitalize(activeEngagement.acquirer_entity_id)} \u2192 ${capitalize(activeEngagement.target_entity_id)}`
+    : null;
 
   // -------------------------------------------------------------------
   // Presets for current page

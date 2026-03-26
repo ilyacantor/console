@@ -20,6 +20,8 @@ export interface UseMaestraStreamOptions {
   session_id: string;
   /** Context block prepended to API message (invisible to chat UI) */
   contextBlock?: string;
+  /** Engagement ID for engagement-scoped chat */
+  engagement_id?: string | null;
 }
 
 export interface UseMaestraStreamResult {
@@ -32,7 +34,7 @@ export interface UseMaestraStreamResult {
 }
 
 export function useMaestraStream(options: UseMaestraStreamOptions): UseMaestraStreamResult {
-  const { onUserMessage, onComplete, page_context, session_id, contextBlock } = options;
+  const { onUserMessage, onComplete, page_context, session_id, contextBlock, engagement_id } = options;
 
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState('');
@@ -79,6 +81,7 @@ export function useMaestraStream(options: UseMaestraStreamOptions): UseMaestraSt
             message: apiMessage,
             page_context: page_context ?? null,
             session_id,
+            engagement_id: engagement_id ?? null,
           }),
           signal: controller.signal,
         });
@@ -157,7 +160,7 @@ export function useMaestraStream(options: UseMaestraStreamOptions): UseMaestraSt
         setStreamBuffer('');
       }
     },
-    [isStreaming, page_context, session_id, contextBlock],
+    [isStreaming, page_context, session_id, contextBlock, engagement_id],
   );
 
   return { sendMessage, isStreaming, streamBuffer, isThinking, error, abort };

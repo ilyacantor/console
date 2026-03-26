@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   type Conflict,
   type CombiningRow,
@@ -13,6 +13,9 @@ import {
   recomputeDeliverables,
   recomputeCombiningStatus,
 } from '../data/deal-seed'
+import { useEngagement } from '../context/EngagementContext'
+import { fetchConflicts } from '../api/client'
+import { capitalize } from '../utils/format'
 
 const LIFECYCLE_STAGES = ['upload', 'map', 'review', 'combine', 'deliver'] as const
 const STAGE_LABELS: Record<string, string> = {
@@ -28,6 +31,20 @@ const STATUS_BAR_COLORS = { green: '#22C55E', amber: '#F59E0B', gray: '#555' }
 const GATE_COLORS = { pass: '#22C55E', pending: '#F59E0B', fail: '#EF4444' }
 const GATE_BG = { pass: '#14332A', pending: '#332B15', fail: '#2A1515' }
 
+const EMPTY_COMBINING_STATUS: StatementStatus[] = [
+  { label: 'P&L', status_text: 'Waiting', percent: 0, color: 'gray' },
+  { label: 'BS', status_text: 'Waiting', percent: 0, color: 'gray' },
+  { label: 'CF', status_text: 'Waiting', percent: 0, color: 'gray' },
+  { label: 'Trial balance', status_text: 'Waiting', percent: 0, color: 'gray' },
+]
+
+const EMPTY_GATES: Gate[] = [
+  { label: 'DR = CR', status: 'pending' },
+  { label: 'Revenue identity', status: 'pending' },
+  { label: 'BS identity (A=L+E)', status: 'pending' },
+  { label: 'Cash continuity', status: 'pending' },
+]
+
 function formatDollars(n: number): string {
   const sign = n < 0 ? '(' : ''
   const close = n < 0 ? ')' : ''
@@ -36,13 +53,74 @@ function formatDollars(n: number): string {
 }
 
 export default function Deal() {
+  const { activeEngagement } = useEngagement()
+
   const [conflicts, setConflicts] = useState<Conflict[]>(() =>
     [...SEED_CONFLICTS].sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1)),
   )
   const [deliverables, setDeliverables] = useState<Deliverable[]>(SEED_DELIVERABLES)
   const [combiningStatus, setCombiningStatus] = useState<StatementStatus[]>(SEED_COMBINING_STATUS)
   const [gates, setGates] = useState<Gate[]>(SEED_GATES)
-  const currentStage = 'review'
+  const [fetchError, setFetchError] = useState<string | null>(null)
+
+  const currentStage = activeEngagement?.lifecycle_stage ?? 'upload'
+  const acquirerName = activeEngagement ? capitalize(activeEngagement.acquirer_entity_id) : 'Acquirer'
+  const targetName = activeEngagement ? capitalize(activeEngagement.target_entity_id) : 'Target'
+
+  const state = activeEngagement?.state_json as Record<string, number> | undefined
+  const costValue = state?.total_cost != null ? `$${state.total_cost.toFixed(2)}` : '--'
+  const costSub = state
+    ? `${state.total_runs ?? 0} runs • ${((state.total_tokens ?? 0) / 1000).toFixed(0)}K tokens`
+    : ''
+
+  // Load conflicts from API when engagement changes
+  useEffect(() => {
+    if (!activeEngagement) return
+    let cancelled = false
+
+    fetchConflicts(activeEngagement.engagement_id)
+      .then(({ conflicts: apiConflicts }) => {
+        if (cancelled) return
+        setFetchError(null)
+
+        if (apiConflicts.length === 0) {
+          // Zero state for fresh engagement
+          setConflicts([])
+          setDeliverables(SEED_DELIVERABLES.map((d) => ({ ...d, status: 'waiting' as const, block_reason: null })))
+          setCombiningStatus(EMPTY_COMBINING_STATUS)
+          setGates(EMPTY_GATES)
+          return
+        }
+
+        // Map API conflicts to local type (strip engagement_id)
+        const local: Conflict[] = apiConflicts.map((c) => ({
+          id: c.id,
+          name: c.name,
+          impact_dollars: c.impact_dollars,
+          impact_label: c.impact_label,
+          severity: c.severity,
+          status: c.status,
+          treatment: c.treatment,
+        }))
+        const sorted = [...local].sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1))
+        setConflicts(sorted)
+        setDeliverables(recomputeDeliverables(sorted, SEED_DELIVERABLES))
+        setCombiningStatus(recomputeCombiningStatus(sorted, SEED_COMBINING_STATUS))
+        const allResolved = sorted.every((c) => c.status === 'resolved')
+        setGates(allResolved
+          ? SEED_GATES.map((g) => ({ ...g, status: 'pass' as const }))
+          : SEED_GATES,
+        )
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setFetchError(
+          `Failed to load conflicts for engagement ${activeEngagement.engagement_id}: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      })
+
+    return () => { cancelled = true }
+  }, [activeEngagement?.engagement_id])
 
   const pendingConflicts = useMemo(() => conflicts.filter((c) => c.status === 'pending'), [conflicts])
   const pendingImpact = useMemo(
@@ -79,25 +157,40 @@ export default function Deal() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      {fetchError && (
+        <div
+          style={{
+            background: '#1A1520',
+            border: '0.5px solid #3B2A50',
+            borderRadius: '8px',
+            padding: '10px 14px',
+            fontSize: '12px',
+            color: '#A78BFA',
+          }}
+        >
+          {fetchError}
+        </div>
+      )}
+
       {/* Lifecycle strip */}
-      <LifecycleStrip currentStage={currentStage} />
+      <LifecycleStrip currentStage={currentStage} acquirerName={acquirerName} targetName={targetName} />
 
       {/* Metric cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
         <MetricCard
           label="COFA mapping"
-          value="100%"
-          sub={`${conflicts.length} accounts • 0 orphans`}
-          valueColor="#22C55E"
+          value={conflicts.length > 0 ? '100%' : '--'}
+          sub={conflicts.length > 0 ? `${conflicts.length} accounts • 0 orphans` : 'No data'}
+          valueColor={conflicts.length > 0 ? '#22C55E' : 'var(--text-muted)'}
         />
         <MetricCard
           label="Conflicts pending"
           value={String(pendingConflicts.length)}
-          sub={`of ${conflicts.length} total, $${Math.round(pendingImpact / 1_000_000)}M impact`}
+          sub={conflicts.length > 0 ? `of ${conflicts.length} total, $${Math.round(pendingImpact / 1_000_000)}M impact` : ''}
           valueColor={pendingConflicts.length > 0 ? '#EF4444' : '#22C55E'}
         />
         <MetricCard label="Deliverables ready" value={`${readyDeliverables} / 10`} sub="" />
-        <MetricCard label="Engagement cost" value="$14.20" sub="9 runs • 47K tokens" />
+        <MetricCard label="Engagement cost" value={costValue} sub={costSub} />
       </div>
 
       {/* Two-column: Conflict register + Deliverables */}
@@ -113,7 +206,7 @@ export default function Deal() {
 
       {/* Two-column: Combining P&L + Status */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-        <CombiningPnl rows={SEED_COMBINING_PNL} conflicts={conflicts} />
+        <CombiningPnl rows={SEED_COMBINING_PNL} conflicts={conflicts} acquirerName={acquirerName} targetName={targetName} />
         <CombiningStatusPanel statuses={combiningStatus} gates={gates} />
       </div>
     </div>
@@ -122,7 +215,7 @@ export default function Deal() {
 
 /* --- Lifecycle strip --- */
 
-function LifecycleStrip({ currentStage }: { currentStage: string }) {
+function LifecycleStrip({ currentStage, acquirerName, targetName }: { currentStage: string; acquirerName: string; targetName: string }) {
   const idx = LIFECYCLE_STAGES.indexOf(currentStage as (typeof LIFECYCLE_STAGES)[number])
 
   return (
@@ -177,7 +270,7 @@ function LifecycleStrip({ currentStage }: { currentStage: string }) {
         })}
       </div>
       <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-        Meridian + Cascadia
+        {acquirerName} + {targetName}
       </span>
     </div>
   )
@@ -244,87 +337,95 @@ function ConflictRegister({
           {pendingCount} pending
         </span>
       </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--border)' }}>
-            <th style={thLeft}>Conflict</th>
-            <th style={thRight}>Impact</th>
-            <th style={thCenter}>Status</th>
-            <th style={thCenter}>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {conflicts.map((c) => (
-            <tr key={c.id} style={{ borderBottom: '1px solid var(--border)' }}>
-              <td style={{ padding: '6px 8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span
+      {conflicts.length === 0 ? (
+        <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '16px', textAlign: 'center' }}>
+          No conflicts for this engagement.
+        </div>
+      ) : (
+        <>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                <th style={thLeft}>Conflict</th>
+                <th style={thRight}>Impact</th>
+                <th style={thCenter}>Status</th>
+                <th style={thCenter}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conflicts.map((c) => (
+                <tr key={c.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ padding: '6px 8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span
+                        style={{
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          background: SEVERITY_COLORS[c.severity],
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span style={{ fontWeight: 500 }}>{c.name}</span>
+                    </div>
+                  </td>
+                  <td
                     style={{
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      background: SEVERITY_COLORS[c.severity],
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span style={{ fontWeight: 500 }}>{c.name}</span>
-                </div>
-              </td>
-              <td
-                style={{
-                  padding: '6px 8px',
-                  textAlign: 'right',
-                  fontFamily: 'monospace',
-                  fontSize: '11px',
-                }}
-              >
-                {c.impact_label}
-              </td>
-              <td style={{ padding: '6px 8px', textAlign: 'center' }}>
-                <StatusPill status={c.status} />
-              </td>
-              <td style={{ padding: '6px 8px', textAlign: 'center' }}>
-                {c.status === 'pending' ? (
-                  <button
-                    onClick={() => onResolve(c.id)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#3B82F6',
+                      padding: '6px 8px',
+                      textAlign: 'right',
+                      fontFamily: 'monospace',
                       fontSize: '11px',
-                      cursor: 'pointer',
-                      fontWeight: 500,
-                      padding: '2px 6px',
                     }}
                   >
-                    Resolve
-                  </button>
-                ) : (
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{c.treatment}</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {pendingCount > 0 && (
-        <div style={{ marginTop: '10px', textAlign: 'right' }}>
-          <button
-            onClick={onBatchApprove}
-            style={{
-              background: 'none',
-              border: '0.5px solid var(--border)',
-              color: '#3B82F6',
-              fontSize: '11px',
-              cursor: 'pointer',
-              padding: '4px 12px',
-              borderRadius: '6px',
-              fontWeight: 500,
-            }}
-          >
-            Batch approve remaining
-          </button>
-        </div>
+                    {c.impact_label}
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                    <StatusPill status={c.status} />
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                    {c.status === 'pending' ? (
+                      <button
+                        onClick={() => onResolve(c.id)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#3B82F6',
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                          fontWeight: 500,
+                          padding: '2px 6px',
+                        }}
+                      >
+                        Resolve
+                      </button>
+                    ) : (
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{c.treatment}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {pendingCount > 0 && (
+            <div style={{ marginTop: '10px', textAlign: 'right' }}>
+              <button
+                onClick={onBatchApprove}
+                style={{
+                  background: 'none',
+                  border: '0.5px solid var(--border)',
+                  color: '#3B82F6',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                  padding: '4px 12px',
+                  borderRadius: '6px',
+                  fontWeight: 500,
+                }}
+              >
+                Batch approve remaining
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -460,7 +561,7 @@ function DeliverableStatusPill({ status, reason }: { status: string; reason: str
 
 /* --- Combining P&L --- */
 
-function CombiningPnl({ rows, conflicts }: { rows: CombiningRow[]; conflicts: Conflict[] }) {
+function CombiningPnl({ rows, conflicts, acquirerName, targetName }: { rows: CombiningRow[]; conflicts: Conflict[]; acquirerName: string; targetName: string }) {
   const pendingConflictIds = new Set(conflicts.filter((c) => c.status === 'pending').map((c) => c.id))
 
   return (
@@ -473,8 +574,8 @@ function CombiningPnl({ rows, conflicts }: { rows: CombiningRow[]; conflicts: Co
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border)' }}>
             <th style={thLeft}></th>
-            <th style={thRight}>Meridian</th>
-            <th style={thRight}>Cascadia</th>
+            <th style={thRight}>{acquirerName}</th>
+            <th style={thRight}>{targetName}</th>
             <th style={thRight}>Adj.</th>
             <th style={thRight}>Combined</th>
           </tr>

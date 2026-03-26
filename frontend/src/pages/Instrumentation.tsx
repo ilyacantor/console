@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchInstrumentationRuns, fetchInstrumentationSummary, type MaestraRun, type InstrumentationSummary } from '../api/client'
+import { useEngagement } from '../context/EngagementContext'
 
 function SummaryCard({ label, value }: { label: string; value: string }) {
   return (
@@ -23,6 +24,7 @@ function StatusPill({ status }: { status: string }) {
 type SortKey = 'step_name' | 'duration_s' | 'tokens' | 'cost_usd' | 'status'
 
 export default function Instrumentation() {
+  const { activeEngagement } = useEngagement()
   const [runs, setRuns] = useState<MaestraRun[]>([])
   const [summary, setSummary] = useState<InstrumentationSummary | null>(null)
   const [filter, setFilter] = useState<string>('all')
@@ -30,10 +32,13 @@ export default function Instrumentation() {
   const [sortAsc, setSortAsc] = useState(true)
 
   useEffect(() => {
-    const params = filter !== 'all' ? { step_name: filter } : undefined
+    const engId = activeEngagement?.engagement_id
+    const params: { step_name?: string; engagement_id?: string } = {}
+    if (filter !== 'all') params.step_name = filter
+    if (engId) params.engagement_id = engId
     fetchInstrumentationRuns(params).then((r) => setRuns(r.runs)).catch(() => {})
-    fetchInstrumentationSummary().then(setSummary).catch(() => {})
-  }, [filter])
+    fetchInstrumentationSummary(engId).then(setSummary).catch(() => {})
+  }, [filter, activeEngagement?.engagement_id])
 
   const stepNames = [...new Set(runs.map((r) => r.step_name))]
 

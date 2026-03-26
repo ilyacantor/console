@@ -143,6 +143,47 @@ def test_create_engagement(mock_create, mock_get):
     )
 
 
+@patch("backend.app.routes.engagements.db.get_conflicts")
+@patch("backend.app.routes.engagements.db.get_engagement")
+def test_get_conflicts(mock_get, mock_conflicts):
+    """GET /api/engagements/{id}/conflicts returns scoped conflicts."""
+    mock_get.return_value = DEMO_ENGAGEMENT
+    mock_conflicts.return_value = [
+        {"id": "COFA-001", "engagement_id": DEMO_ENGAGEMENT["engagement_id"], "name": "Revenue gross/net recognition", "impact_dollars": 340000000, "impact_label": "$340M", "severity": "high", "status": "pending", "treatment": None, "created_at": "2026-03-25T10:00:00+00:00"},
+        {"id": "COFA-002", "engagement_id": DEMO_ENGAGEMENT["engagement_id"], "name": "Benefits loading (COGS vs OpEx)", "impact_dollars": 89000000, "impact_label": "$89M", "severity": "medium", "status": "pending", "treatment": None, "created_at": "2026-03-25T10:00:00+00:00"},
+        {"id": "COFA-003", "engagement_id": DEMO_ENGAGEMENT["engagement_id"], "name": "S&M bundling", "impact_dollars": 28000000, "impact_label": "$28M", "severity": "low", "status": "resolved", "treatment": "Acq. treatment", "created_at": "2026-03-25T10:00:00+00:00"},
+        {"id": "COFA-004", "engagement_id": DEMO_ENGAGEMENT["engagement_id"], "name": "Recruiting capitalization", "impact_dollars": 12000000, "impact_label": "$12M", "severity": "medium", "status": "pending", "treatment": None, "created_at": "2026-03-25T10:00:00+00:00"},
+        {"id": "COFA-005", "engagement_id": DEMO_ENGAGEMENT["engagement_id"], "name": "Automation capitalization", "impact_dollars": 8000000, "impact_label": "$8M", "severity": "low", "status": "resolved", "treatment": "Keep both", "created_at": "2026-03-25T10:00:00+00:00"},
+        {"id": "COFA-006", "engagement_id": DEMO_ENGAGEMENT["engagement_id"], "name": "Depreciation method", "impact_dollars": 4000000, "impact_label": "$4M", "severity": "low", "status": "resolved", "treatment": "Post-close", "created_at": "2026-03-25T10:00:00+00:00"},
+    ]
+    resp = client.get(f"/api/engagements/{DEMO_ENGAGEMENT['engagement_id']}/conflicts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["conflicts"]) == 6
+    assert data["conflicts"][0]["id"] == "COFA-001"
+    assert data["conflicts"][0]["severity"] == "high"
+
+
+@patch("backend.app.routes.engagements.db.get_engagement")
+def test_get_conflicts_not_found(mock_get):
+    """GET /api/engagements/{id}/conflicts returns 404 for unknown engagement."""
+    mock_get.return_value = None
+    resp = client.get("/api/engagements/00000000-0000-0000-0000-000000000000/conflicts")
+    assert resp.status_code == 404
+
+
+@patch("backend.app.routes.engagements.db.get_conflicts")
+@patch("backend.app.routes.engagements.db.get_engagement")
+def test_get_conflicts_empty(mock_get, mock_conflicts):
+    """GET /api/engagements/{id}/conflicts returns empty list for engagement with no conflicts."""
+    mock_get.return_value = DEMO_ENGAGEMENT
+    mock_conflicts.return_value = []
+    resp = client.get(f"/api/engagements/{DEMO_ENGAGEMENT['engagement_id']}/conflicts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["conflicts"] == []
+
+
 @patch("backend.app.routes.engagements.db.get_engagement")
 def test_directional_schema(mock_get):
     """Engagement has directional fields: acquirer_entity_id and target_entity_id."""

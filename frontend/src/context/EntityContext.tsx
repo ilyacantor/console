@@ -8,6 +8,7 @@ export interface Entity {
 const ENTITIES: Entity[] = [
   { id: 'meridian', label: 'Meridian' },
   { id: 'cascadia', label: 'Cascadia' },
+  { id: 'techflow', label: 'TechFlow' },
 ]
 
 interface EntityContextValue {

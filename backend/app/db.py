@@ -142,6 +142,23 @@ async def _ensure_schema() -> None:
             )
         """)
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS console.conflicts (
+                id VARCHAR(20) PRIMARY KEY,
+                engagement_id UUID NOT NULL,
+                name VARCHAR(200) NOT NULL,
+                impact_dollars BIGINT NOT NULL,
+                impact_label VARCHAR(20) NOT NULL,
+                severity VARCHAR(10) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                treatment VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_conflicts_engagement
+            ON console.conflicts(engagement_id)
+        """)
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS console.uploads (
                 upload_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 engagement_id UUID,
@@ -191,6 +208,7 @@ async def _seed_config() -> None:
             )
 
     await _seed_engagements()
+    await _seed_conflicts()
     await _seed_change_events()
     await _seed_maestra_runs()
     await _seed_narrative()
@@ -210,6 +228,16 @@ async def _seed_engagements() -> None:
         "total_runs": 9,
         "total_tokens": 47000,
     }
+    demo_id_2 = "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+    state_2 = {
+        "conflicts_resolved": 0,
+        "conflicts_total": 0,
+        "deliverables_ready": 0,
+        "total_cost": 0,
+        "total_runs": 0,
+        "total_tokens": 0,
+    }
+
     async with _pool.acquire() as conn:
         await conn.execute(
             """
@@ -226,6 +254,50 @@ async def _seed_engagements() -> None:
             "review",
             json.dumps(state),
         )
+        await conn.execute(
+            """
+            INSERT INTO console.engagements
+                (engagement_id, acquirer_entity_id, target_entity_id,
+                 engagement_type, lifecycle_stage, state_json)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb)
+            ON CONFLICT (engagement_id) DO NOTHING
+            """,
+            demo_id_2,
+            "meridian",
+            "techflow",
+            "MA",
+            "upload",
+            json.dumps(state_2),
+        )
+
+
+async def _seed_conflicts() -> None:
+    """Seed COFA conflicts for the demo Meridian + Cascadia engagement."""
+    if not _pool:
+        return
+
+    demo_eng_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    conflicts = [
+        ("COFA-001", "Revenue gross/net recognition", 340_000_000, "$340M", "high", "pending", None),
+        ("COFA-002", "Benefits loading (COGS vs OpEx)", 89_000_000, "$89M", "medium", "pending", None),
+        ("COFA-004", "Recruiting capitalization", 12_000_000, "$12M", "medium", "pending", None),
+        ("COFA-003", "S&M bundling", 28_000_000, "$28M", "low", "resolved", "Acq. treatment"),
+        ("COFA-005", "Automation capitalization", 8_000_000, "$8M", "low", "resolved", "Keep both"),
+        ("COFA-006", "Depreciation method", 4_000_000, "$4M", "low", "resolved", "Post-close"),
+    ]
+
+    async with _pool.acquire() as conn:
+        for c in conflicts:
+            await conn.execute(
+                """
+                INSERT INTO console.conflicts
+                    (id, engagement_id, name, impact_dollars,
+                     impact_label, severity, status, treatment)
+                VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                c[0], demo_eng_id, c[1], c[2], c[3], c[4], c[5], c[6],
+            )
 
 
 async def _seed_change_events() -> None:
@@ -485,6 +557,38 @@ def _engagement_row_to_dict(r: Any) -> dict[str, Any]:
         "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
     }
+
+
+async def get_conflicts(engagement_id: str) -> list[dict[str, Any]]:
+    """Get COFA conflicts for an engagement."""
+    if not _pool:
+        return []
+
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, engagement_id, name, impact_dollars, impact_label,
+                   severity, status, treatment, created_at
+            FROM console.conflicts
+            WHERE engagement_id = $1::uuid
+            ORDER BY id
+            """,
+            engagement_id,
+        )
+        return [
+            {
+                "id": r["id"],
+                "engagement_id": str(r["engagement_id"]),
+                "name": r["name"],
+                "impact_dollars": r["impact_dollars"],
+                "impact_label": r["impact_label"],
+                "severity": r["severity"],
+                "status": r["status"],
+                "treatment": r["treatment"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ]
 
 
 async def get_engagement_history(engagement_id: str, limit: int = 50) -> list[dict[str, Any]]:
