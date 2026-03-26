@@ -60,17 +60,8 @@ export default function ModuleIframe({
     if (timerRef.current) clearTimeout(timerRef.current)
   }
 
-  // Health not yet loaded — show loading
-  if (!health) {
-    return (
-      <div style={{ color: 'var(--text-muted)', fontSize: '12px', padding: '40px', textAlign: 'center' }}>
-        Checking service health...
-      </div>
-    )
-  }
-
-  // Service is down per health check
-  if (isDown) {
+  // Service is confirmed down per health check
+  if (health && isDown) {
     return (
       <div
         style={{

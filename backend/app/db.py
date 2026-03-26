@@ -50,6 +50,11 @@ def get_pool() -> asyncpg.Pool | None:
     return _pool
 
 
+def is_connected() -> bool:
+    """Return True if the database pool is initialized and available."""
+    return _pool is not None
+
+
 async def _ensure_schema() -> None:
     """Create console schema and tables if they don't exist."""
     if not _pool:
@@ -89,11 +94,31 @@ async def _ensure_schema() -> None:
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        # Migration: add tenant_id column if it doesn't exist yet
+        # Migrations: add columns that may be missing from older schema versions
         await conn.execute("""
             ALTER TABLE console.engagements
             ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100)
         """)
+        await conn.execute("""
+            ALTER TABLE console.engagements
+            ADD COLUMN IF NOT EXISTS acquirer_entity_id VARCHAR(100)
+        """)
+        await conn.execute("""
+            ALTER TABLE console.engagements
+            ADD COLUMN IF NOT EXISTS target_entity_id VARCHAR(100)
+        """)
+        # Backfill acquirer/target from legacy entity_ids array if present
+        try:
+            await conn.execute("""
+                UPDATE console.engagements
+                SET acquirer_entity_id = entity_ids[1],
+                    target_entity_id = entity_ids[2]
+                WHERE acquirer_entity_id IS NULL
+                  AND entity_ids IS NOT NULL
+                  AND array_length(entity_ids, 1) >= 2
+            """)
+        except Exception:
+            pass  # entity_ids column may not exist in newer schema
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS console.change_events (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -175,6 +200,35 @@ async def _ensure_schema() -> None:
                 file_content BYTEA,
                 parse_result JSONB,
                 status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS console.pipeline_jobs (
+                job_id VARCHAR(20) PRIMARY KEY,
+                pipeline_mode VARCHAR(10) NOT NULL,
+                execution_mode VARCHAR(10) NOT NULL,
+                status VARCHAR(30) NOT NULL,
+                started_at TIMESTAMPTZ NOT NULL,
+                completed_at TIMESTAMPTZ,
+                steps JSONB NOT NULL,
+                current_step INTEGER DEFAULT 0,
+                total_steps INTEGER NOT NULL,
+                message TEXT,
+                config JSONB DEFAULT '{}',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS console.recon_history (
+                id SERIAL PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                pipeline_mode TEXT NOT NULL,
+                entity_id TEXT,
+                run_id TEXT,
+                provenance_tag TEXT,
+                overall TEXT NOT NULL,
+                checks JSONB NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
@@ -1228,3 +1282,212 @@ async def _seed_narrative() -> None:
         ],
     }
     await set_config("demo_narrative", default_narrative)
+
+
+# --- Pipeline jobs (new orchestrator) ---
+
+
+def _parse_dt(val: str | datetime | None) -> datetime | None:
+    """Convert ISO string to datetime for asyncpg timestamptz params."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val
+    return datetime.fromisoformat(val.replace("Z", "+00:00"))
+
+
+async def save_pipeline_job(job) -> None:
+    """Upsert a pipeline job (from the orchestrator's PipelineJob model)."""
+    if not _pool:
+        logger.error(
+            f"Cannot save pipeline job — database not available. "
+            f"job_id={job.job_id}"
+        )
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO console.pipeline_jobs
+                (job_id, pipeline_mode, execution_mode, status, started_at,
+                 completed_at, steps, current_step, total_steps, message, config)
+            VALUES ($1, $2, $3, $4, $5::timestamptz, $6::timestamptz,
+                    $7::jsonb, $8, $9, $10, $11::jsonb)
+            ON CONFLICT (job_id) DO UPDATE
+                SET status = EXCLUDED.status,
+                    completed_at = EXCLUDED.completed_at,
+                    steps = EXCLUDED.steps,
+                    current_step = EXCLUDED.current_step,
+                    message = EXCLUDED.message
+            """,
+            job.job_id,
+            job.pipeline_mode.value if hasattr(job.pipeline_mode, 'value') else job.pipeline_mode,
+            job.execution_mode.value if hasattr(job.execution_mode, 'value') else job.execution_mode,
+            job.status,
+            _parse_dt(job.started_at),
+            _parse_dt(job.completed_at),
+            json.dumps([s.model_dump() for s in job.steps]),
+            job.current_step,
+            job.total_steps,
+            job.message,
+            json.dumps(job.config),
+        )
+
+
+async def get_pipeline_jobs(limit: int = 20) -> list[dict[str, Any]]:
+    """Fetch recent pipeline jobs from Postgres."""
+    if not _pool:
+        return []
+
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT job_id, pipeline_mode, execution_mode, status,
+                   started_at, completed_at, steps, current_step,
+                   total_steps, message, config, created_at
+            FROM console.pipeline_jobs
+            ORDER BY created_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+        return [
+            {
+                "job_id": r["job_id"],
+                "pipeline_mode": r["pipeline_mode"],
+                "execution_mode": r["execution_mode"],
+                "status": r["status"],
+                "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+                "completed_at": r["completed_at"].isoformat() if r["completed_at"] else None,
+                "steps": json.loads(r["steps"]) if isinstance(r["steps"], str) else r["steps"],
+                "current_step": r["current_step"],
+                "total_steps": r["total_steps"],
+                "message": r["message"],
+                "config": json.loads(r["config"]) if isinstance(r["config"], str) else r["config"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ]
+
+
+async def get_pipeline_job(job_id: str) -> dict[str, Any] | None:
+    """Fetch a single pipeline job by ID."""
+    if not _pool:
+        return None
+
+    async with _pool.acquire() as conn:
+        r = await conn.fetchrow(
+            """
+            SELECT job_id, pipeline_mode, execution_mode, status,
+                   started_at, completed_at, steps, current_step,
+                   total_steps, message, config, created_at
+            FROM console.pipeline_jobs
+            WHERE job_id = $1
+            """,
+            job_id,
+        )
+        if not r:
+            return None
+        return {
+            "job_id": r["job_id"],
+            "pipeline_mode": r["pipeline_mode"],
+            "execution_mode": r["execution_mode"],
+            "status": r["status"],
+            "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+            "completed_at": r["completed_at"].isoformat() if r["completed_at"] else None,
+            "steps": json.loads(r["steps"]) if isinstance(r["steps"], str) else r["steps"],
+            "current_step": r["current_step"],
+            "total_steps": r["total_steps"],
+            "message": r["message"],
+            "config": json.loads(r["config"]) if isinstance(r["config"], str) else r["config"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        }
+
+
+# --- DCL Recon history ---
+
+
+async def save_recon(
+    job_id: str,
+    pipeline_mode: str,
+    entity_id: str | None,
+    run_id: str | None,
+    provenance_tag: str | None,
+    overall: str,
+    checks: list,
+) -> int | None:
+    """Write a recon snapshot to recon_history. Returns the row id."""
+    if not _pool:
+        logger.error(f"Cannot save recon — database not available. job_id={job_id}")
+        return None
+
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO console.recon_history
+                (job_id, pipeline_mode, entity_id, run_id, provenance_tag, overall, checks)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+            RETURNING id
+            """,
+            job_id, pipeline_mode, entity_id, run_id,
+            provenance_tag, overall, json.dumps(checks),
+        )
+        return row["id"] if row else None
+
+
+async def get_recon_history(limit: int = 20) -> list[dict[str, Any]]:
+    """Return recent recon history entries."""
+    if not _pool:
+        return []
+
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, job_id, entity_id, provenance_tag, overall, created_at
+            FROM console.recon_history
+            ORDER BY created_at DESC
+            LIMIT $1
+            """,
+            min(limit, 100),
+        )
+        return [
+            {
+                "id": r["id"],
+                "job_id": r["job_id"],
+                "entity_id": r["entity_id"],
+                "provenance_tag": r["provenance_tag"],
+                "overall": r["overall"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ]
+
+
+async def get_recon_snapshot(history_id: int) -> dict[str, Any] | None:
+    """Return a full recon snapshot including the checks JSONB."""
+    if not _pool:
+        return None
+
+    async with _pool.acquire() as conn:
+        r = await conn.fetchrow(
+            """
+            SELECT id, job_id, pipeline_mode, entity_id, run_id,
+                   provenance_tag, overall, checks, created_at
+            FROM console.recon_history
+            WHERE id = $1
+            """,
+            history_id,
+        )
+        if not r:
+            return None
+        return {
+            "history_id": r["id"],
+            "job_id": r["job_id"],
+            "pipeline_mode": r["pipeline_mode"],
+            "entity_id": r["entity_id"],
+            "run_id": r["run_id"],
+            "provenance_tag": r["provenance_tag"],
+            "overall": r["overall"],
+            "checks": json.loads(r["checks"]) if isinstance(r["checks"], str) else r["checks"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        }

@@ -29,6 +29,8 @@ const NAV: NavSection[] = [
     items: [
       { label: 'Deal', path: '/deal', color: '#F97066' },
       { label: 'Upload', path: '/upload', color: '#F97066' },
+      { label: 'Due Diligence', path: '/due-diligence', color: '#F97066' },
+      { label: 'Integration', path: '/integration', color: '#F97066' },
     ],
   },
   {

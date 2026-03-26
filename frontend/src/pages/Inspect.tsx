@@ -48,7 +48,7 @@ export default function Inspect() {
   const { activeEngagement } = useEngagement()
   const acquirerName = activeEngagement ? capitalize(activeEngagement.acquirer_entity_id) : 'Acquirer'
   const targetName = activeEngagement ? capitalize(activeEngagement.target_entity_id) : 'Target'
-  const [tab, setTab] = useState<Tab>('coverage')
+  const [tab, setTab] = useState<Tab>('lineage')
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [overviewError, setOverviewError] = useState<string | null>(null)
   const [cofaRows, setCofaRows] = useState<CofaMergeRow[] | null>(null)

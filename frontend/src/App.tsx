@@ -13,6 +13,8 @@ import Constitution from './pages/Constitution'
 import Instrumentation from './pages/Instrumentation'
 import Config from './pages/Config'
 import NarrativeEditor from './pages/NarrativeEditor'
+import DueDiligence from './pages/DueDiligence'
+import Integration from './pages/Integration'
 
 export default function App() {
   return (
@@ -25,6 +27,8 @@ export default function App() {
         <Route path="/inspect" element={<Inspect />} />
         <Route path="/deal" element={<Deal />} />
         <Route path="/upload" element={<Upload />} />
+        <Route path="/due-diligence" element={<DueDiligence />} />
+        <Route path="/integration" element={<Integration />} />
         <Route path="/changes" element={<Changes />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/engagements" element={<Engagements />} />

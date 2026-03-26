@@ -37,32 +37,59 @@ export function fetchHealth(): Promise<HealthResponse> {
   return fetchJSON('/api/health')
 }
 
-// Pipeline
-export interface PipelineStep {
+// Pipeline — new orchestrator types (matching Platform's operator models)
+export interface PipelineStepData {
   name: string
   display_name: string
-  status: string
-  duration_s: number | null
-  triples: number | null
-  error: string | null
-  detail: string | null
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
+  message: string | null
+  started_at: string | null
+  completed_at: string | null
+  duration_ms: number | null
+  data: Record<string, unknown> | null
+  parallel_group: string | null
+  provenance_tag: string | null
 }
 
-export interface PipelineRun {
-  run_id: string
-  mode: string
-  entity_ids: string[]
-  steps: PipelineStep[]
-  total_duration_s: number | null
-  total_triples: number | null
+export interface PipelineJobData {
+  job_id: string
+  pipeline_mode: 'se' | 'me'
+  execution_mode: 'batch' | 'step'
   status: string
+  started_at: string
+  completed_at: string | null
+  steps: PipelineStepData[]
+  current_step: number
+  total_steps: number
+  message: string
+  config: Record<string, unknown>
   created_at?: string
 }
 
-export function runPipeline(mode: string, entities: string[]): Promise<PipelineRun> {
-  return fetchJSON('/api/pipeline/run', {
+interface StartPipelineResponse {
+  job_id: string
+  status: string
+  message: string
+}
+
+export function startPipeline(
+  mode: 'se' | 'me',
+  execution: 'batch' | 'step',
+  config?: Record<string, unknown>,
+): Promise<StartPipelineResponse> {
+  return fetchJSON('/api/pipeline/start', {
     method: 'POST',
-    body: JSON.stringify({ mode, entities }),
+    body: JSON.stringify({ mode, execution, config }),
+  })
+}
+
+export function fetchPipelineStatus(jobId: string): Promise<PipelineJobData> {
+  return fetchJSON(`/api/pipeline/status?job_id=${encodeURIComponent(jobId)}`)
+}
+
+export function advancePipeline(jobId: string): Promise<PipelineJobData> {
+  return fetchJSON(`/api/pipeline/advance?job_id=${encodeURIComponent(jobId)}`, {
+    method: 'POST',
   })
 }
 
@@ -70,12 +97,59 @@ export function resetPipeline(): Promise<{ status: string }> {
   return fetchJSON('/api/pipeline/reset', { method: 'POST' })
 }
 
-export function fetchRuns(limit = 20): Promise<{ runs: PipelineRun[] }> {
+export function fetchRuns(limit = 20): Promise<{ runs: PipelineJobData[] }> {
   return fetchJSON(`/api/pipeline/runs?limit=${limit}`)
 }
 
-export function fetchRun(runId: string): Promise<PipelineRun> {
+export function fetchRun(runId: string): Promise<PipelineJobData> {
   return fetchJSON(`/api/pipeline/runs/${runId}`)
+}
+
+// DCL Recon
+export interface ReconCheck {
+  check: string
+  status: 'pass' | 'fail' | 'warn' | 'skip'
+  expected?: number | string[] | string
+  actual?: number | string[] | string
+  detail?: string | null
+  entities?: string[]
+  missing?: string[]
+  rejected?: number
+  reasons?: unknown[]
+  populated?: number
+  total?: number
+  gaps?: string[]
+}
+
+export interface ReconResult {
+  run_id: string | null
+  entity_id: string | null
+  timestamp: string
+  overall: 'pass' | 'warn' | 'fail'
+  checks: ReconCheck[]
+  detail?: string
+  history_id?: number | null
+}
+
+export interface ReconHistoryEntry {
+  id: number
+  job_id: string
+  entity_id: string | null
+  provenance_tag: string | null
+  overall: 'pass' | 'warn' | 'fail'
+  created_at: string
+}
+
+export function fetchDclRecon(jobId: string): Promise<ReconResult> {
+  return fetchJSON(`/api/pipeline/dcl-recon?job_id=${encodeURIComponent(jobId)}`)
+}
+
+export function fetchReconHistory(limit = 20): Promise<ReconHistoryEntry[]> {
+  return fetchJSON(`/api/pipeline/dcl-recon/history?limit=${limit}`)
+}
+
+export function fetchReconSnapshot(historyId: number): Promise<ReconResult> {
+  return fetchJSON(`/api/pipeline/dcl-recon/history/${historyId}`)
 }
 
 // Baselines
