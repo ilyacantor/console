@@ -1,65 +1,12 @@
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { fetchChangeSummary } from '../api/client'
-
-interface NavItem {
-  label: string
-  path: string
-  color: string
-  indent?: boolean
-  external?: string
-}
-
-interface NavSection {
-  title: string
-  items: NavItem[]
-}
-
-const NAV: NavSection[] = [
-  {
-    title: 'CONSUME',
-    items: [
-      { label: 'Dashboards', path: '/dashboards', color: '#3B82F6' },
-      { label: 'Reports', path: '/reports', color: '#3B82F6' },
-      { label: 'Inspect', path: '/inspect', color: '#3B82F6' },
-    ],
-  },
-  {
-    title: 'M&A',
-    items: [
-      { label: 'Deal', path: '/deal', color: '#F97066' },
-      { label: 'Upload', path: '/upload', color: '#F97066' },
-      { label: 'Due Diligence', path: '/due-diligence', color: '#F97066' },
-      { label: 'Integration', path: '/integration', color: '#F97066' },
-    ],
-  },
-  {
-    title: 'MONITOR',
-    items: [
-      { label: 'Changes', path: '/changes', color: '#F59E0B' },
-      { label: 'Pipeline', path: '/pipeline', color: '#22C55E' },
-    ],
-  },
-  {
-    title: 'MAESTRA',
-    items: [
-      { label: 'Tasks', path: '/tasks', color: '#7C3AED' },
-      { label: 'Engagements', path: '/engagements', color: '#7C3AED' },
-      { label: 'Constitution', path: '/constitution', color: '#7C3AED' },
-      { label: 'Instrumentation', path: '/instrumentation', color: '#7C3AED', indent: true },
-    ],
-  },
-  {
-    title: 'SYSTEM',
-    items: [
-      { label: 'Config', path: '/config', color: '#9CA3AF' },
-      { label: 'Narrative', path: '/narrative-editor', color: '#9CA3AF' },
-      { label: 'Policy', path: '', color: '#9CA3AF', external: 'https://aodv3-1.onrender.com' },
-    ],
-  },
-]
+import { useMode } from '../context/ModeContext'
+import { NAV_BY_MODE, type NavSection } from '../data/sidebarNav'
 
 export default function Sidebar() {
+  const { mode } = useMode()
+  const nav: NavSection[] = NAV_BY_MODE[mode]
   const [badgeCount, setBadgeCount] = useState(0)
 
   useEffect(() => {
@@ -87,7 +34,7 @@ export default function Sidebar() {
         padding: '12px 0',
       }}
     >
-      {NAV.map((section) => (
+      {nav.map((section) => (
         <div key={section.title} style={{ marginBottom: '16px' }}>
           <div
             style={{

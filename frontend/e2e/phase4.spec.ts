@@ -21,10 +21,11 @@ test.describe('Sidebar navigation', () => {
   test('nav sections present', async ({ page }) => {
     await page.goto('/')
     const sidebar = page.locator('nav')
-    await expect(sidebar.getByText('CONSUME')).toBeVisible()
+    // Default mode in dev is ALL — shows OPERATE, M&A, MONITOR, M.AI, SYSTEM
+    await expect(sidebar.getByText('OPERATE')).toBeVisible()
     await expect(sidebar.getByText('M&A')).toBeVisible()
     await expect(sidebar.getByText('MONITOR')).toBeVisible()
-    await expect(sidebar.getByText('MAESTRA')).toBeVisible()
+    await expect(sidebar.getByText('M.AI')).toBeVisible()
     await expect(sidebar.getByText('SYSTEM')).toBeVisible()
   })
 })
@@ -245,7 +246,7 @@ test.describe('Narrative Editor page', () => {
   })
 
   test('save button present', async ({ page }) => {
-    await expect(main(page).getByRole('button', { name: 'Save' })).toBeVisible()
+    await expect(main(page).getByRole('button', { name: 'Save', exact: true })).toBeVisible()
   })
 })
 

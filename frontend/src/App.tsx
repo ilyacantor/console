@@ -15,6 +15,8 @@ import Config from './pages/Config'
 import NarrativeEditor from './pages/NarrativeEditor'
 import DueDiligence from './pages/DueDiligence'
 import Integration from './pages/Integration'
+import Merge from './pages/Merge'
+import Context from './pages/Context'
 
 export default function App() {
   return (
@@ -36,6 +38,8 @@ export default function App() {
         <Route path="/instrumentation" element={<Instrumentation />} />
         <Route path="/config" element={<Config />} />
         <Route path="/narrative-editor" element={<NarrativeEditor />} />
+        <Route path="/merge" element={<Merge />} />
+        <Route path="/context" element={<Context />} />
       </Routes>
     </Layout>
   )
