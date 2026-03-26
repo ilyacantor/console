@@ -20,6 +20,9 @@ import {
   PanelRightOpen,
   PanelRightClose,
   Trash2,
+  Copy,
+  Download,
+  Check,
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { useMaestraStream } from '../hooks/useMaestraStream';
@@ -49,6 +52,32 @@ interface MaestraStatusResponse {
   engagement_id?: string | null;
   status?: string | null;
   entity?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Format messages as Markdown for export
+// ---------------------------------------------------------------------------
+
+function formatMessagesAsMarkdown(messages: FloatMessage[]): string {
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const lines: string[] = [`# Maestra Chat — ${dateStr}`, ''];
+  for (const msg of messages) {
+    const time = new Date(msg.timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    if (msg.role === 'system') {
+      lines.push('---', `*${msg.content}*`, '');
+    } else {
+      const speaker = msg.role === 'user' ? 'You' : 'Maestra';
+      lines.push(`**${speaker}** (${time})`, '', msg.content, '');
+    }
+  }
+  return lines.join('\n').trimEnd() + '\n';
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +113,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
   const [input, setInput] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -246,6 +276,27 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
     }
   };
 
+  const handleCopyToClipboard = () => {
+    const md = formatMessagesAsMarkdown(messages);
+    navigator.clipboard.writeText(md);
+    setCopyFeedback(true);
+    setTimeout(() => setCopyFeedback(false), 2000);
+    setMenuOpen(false);
+  };
+
+  const handleDownloadMarkdown = () => {
+    const md = formatMessagesAsMarkdown(messages);
+    const dateTag = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `maestra-chat-${dateTag}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setMenuOpen(false);
+  };
+
   const handleClearConversation = () => {
     if (!confirmClear) {
       setConfirmClear(true);
@@ -352,6 +403,23 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
                 )}
                 {messages.length > 0 && (
                   <>
+                    <div style={{ borderTop: '0.5px solid var(--border)', margin: '4px 0' }} />
+                    <button
+                      onClick={handleCopyToClipboard}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm"
+                      style={{ color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                    >
+                      {copyFeedback ? <Check className="w-3.5 h-3.5" style={{ color: '#22C55E' }} /> : <Copy className="w-3.5 h-3.5" />}
+                      {copyFeedback ? 'Copied!' : 'Copy to clipboard'}
+                    </button>
+                    <button
+                      onClick={handleDownloadMarkdown}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm"
+                      style={{ color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download as .md
+                    </button>
                     <div style={{ borderTop: '0.5px solid var(--border)', margin: '4px 0' }} />
                     <button
                       onClick={handleClearConversation}
