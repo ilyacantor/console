@@ -81,12 +81,18 @@ async def _ensure_schema() -> None:
                 engagement_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 acquirer_entity_id VARCHAR(100) NOT NULL,
                 target_entity_id VARCHAR(100) NOT NULL,
+                tenant_id VARCHAR(100),
                 engagement_type VARCHAR(10) NOT NULL,
                 lifecycle_stage VARCHAR(20) DEFAULT 'upload',
                 state_json JSONB DEFAULT '{}',
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
+        """)
+        # Migration: add tenant_id column if it doesn't exist yet
+        await conn.execute("""
+            ALTER TABLE console.engagements
+            ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100)
         """)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS console.change_events (
@@ -238,18 +244,22 @@ async def _seed_engagements() -> None:
         "total_tokens": 0,
     }
 
+    tenant_id = config.AOS_DEV_TENANT_ID or None
+
     async with _pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO console.engagements
                 (engagement_id, acquirer_entity_id, target_entity_id,
-                 engagement_type, lifecycle_stage, state_json)
-            VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb)
-            ON CONFLICT (engagement_id) DO NOTHING
+                 tenant_id, engagement_type, lifecycle_stage, state_json)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb)
+            ON CONFLICT (engagement_id) DO UPDATE
+                SET tenant_id = COALESCE(console.engagements.tenant_id, EXCLUDED.tenant_id)
             """,
             demo_id,
             "meridian",
             "cascadia",
+            tenant_id,
             "MA",
             "review",
             json.dumps(state),
@@ -258,13 +268,15 @@ async def _seed_engagements() -> None:
             """
             INSERT INTO console.engagements
                 (engagement_id, acquirer_entity_id, target_entity_id,
-                 engagement_type, lifecycle_stage, state_json)
-            VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb)
-            ON CONFLICT (engagement_id) DO NOTHING
+                 tenant_id, engagement_type, lifecycle_stage, state_json)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb)
+            ON CONFLICT (engagement_id) DO UPDATE
+                SET tenant_id = COALESCE(console.engagements.tenant_id, EXCLUDED.tenant_id)
             """,
             demo_id_2,
             "meridian",
             "techflow",
+            tenant_id,
             "MA",
             "upload",
             json.dumps(state_2),
@@ -483,7 +495,7 @@ async def get_engagements() -> list[dict[str, Any]]:
         rows = await conn.fetch(
             """
             SELECT engagement_id, acquirer_entity_id, target_entity_id,
-                   engagement_type, lifecycle_stage,
+                   tenant_id, engagement_type, lifecycle_stage,
                    state_json, created_at, updated_at
             FROM console.engagements
             ORDER BY created_at DESC
@@ -501,7 +513,7 @@ async def get_engagement(engagement_id: str) -> dict[str, Any] | None:
         r = await conn.fetchrow(
             """
             SELECT engagement_id, acquirer_entity_id, target_entity_id,
-                   engagement_type, lifecycle_stage,
+                   tenant_id, engagement_type, lifecycle_stage,
                    state_json, created_at, updated_at
             FROM console.engagements
             WHERE engagement_id = $1::uuid
@@ -551,6 +563,7 @@ def _engagement_row_to_dict(r: Any) -> dict[str, Any]:
         "engagement_id": str(r["engagement_id"]),
         "acquirer_entity_id": r["acquirer_entity_id"],
         "target_entity_id": r["target_entity_id"],
+        "tenant_id": r["tenant_id"],
         "engagement_type": r["engagement_type"],
         "lifecycle_stage": r["lifecycle_stage"],
         "state_json": json.loads(r["state_json"]) if isinstance(r["state_json"], str) else r["state_json"],

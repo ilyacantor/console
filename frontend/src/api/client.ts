@@ -99,6 +99,7 @@ export interface Engagement {
   engagement_id: string
   acquirer_entity_id: string
   target_entity_id: string
+  tenant_id: string | null
   engagement_type: string
   lifecycle_stage: string
   state_json: Record<string, unknown>
@@ -150,8 +151,14 @@ export function fetchDclContext(): Promise<unknown> {
   return fetchJSON('/api/proxy/dcl/api/dcl/contextualization-summary')
 }
 
-export function fetchDclTriplesOverview(): Promise<unknown> {
-  return fetchJSON('/api/proxy/dcl/api/dcl/triples/overview')
+export function fetchDclTriplesOverview(tenantId?: string): Promise<unknown> {
+  const qs = tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : ''
+  return fetchJSON(`/api/proxy/dcl/api/dcl/triples/overview${qs}`)
+}
+
+export function fetchDclContextualizationSummary(tenantId?: string): Promise<unknown> {
+  const qs = tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : ''
+  return fetchJSON(`/api/proxy/dcl/api/dcl/contextualization-summary${qs}`)
 }
 
 export function fetchDclCofaAdjustments(): Promise<unknown> {

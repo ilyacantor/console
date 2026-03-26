@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   fetchDclTriplesOverview,
+  fetchDclContextualizationSummary,
   fetchDclCofaAdjustments,
 } from '../api/client'
 import { type CofaMergeRow, SEED_COFA_MERGE } from '../data/deal-seed'
@@ -54,17 +55,23 @@ export default function Inspect() {
   const [cofaError, setCofaError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  const tenantId = activeEngagement?.tenant_id ?? undefined
+
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
 
-      // Load triples overview
+      // Load triples overview (for total count + entity breakdown) and
+      // contextualization summary (for domain detail, sources, confidence)
       try {
-        const raw = (await fetchDclTriplesOverview()) as Record<string, unknown>
+        const [overviewRaw, ctxRaw] = await Promise.all([
+          fetchDclTriplesOverview(tenantId) as Promise<Record<string, unknown>>,
+          fetchDclContextualizationSummary(tenantId) as Promise<Record<string, unknown>>,
+        ])
         if (!cancelled) {
-          setOverview(parseOverview(raw))
+          setOverview(parseOverview(overviewRaw, ctxRaw))
           setOverviewError(null)
         }
       } catch (err) {
@@ -98,7 +105,7 @@ export default function Inspect() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [tenantId])
 
   const domainCount = overview?.domains.filter((d) => d.triples > 0).length ?? 0
   const totalDomains = overview?.domains.length ?? 0
@@ -490,52 +497,63 @@ function EmptyState({ message }: { message: string }) {
 
 /* --- Parsing helpers --- */
 
-function parseOverview(raw: Record<string, unknown>): OverviewData {
+function confidenceTier(avg: number): string {
+  if (avg >= 0.9) return 'high'
+  if (avg >= 0.7) return 'medium'
+  return 'low'
+}
+
+function parseOverview(
+  overview: Record<string, unknown>,
+  ctx: Record<string, unknown>,
+): OverviewData {
   const domains: DomainInfo[] = []
   const sources: SourceInfo[] = []
 
-  // Parse domains from various possible shapes
-  const rawDomains = (raw.domain_breakdown ?? raw.domains ?? []) as Record<string, unknown>[]
-  if (Array.isArray(rawDomains)) {
-    for (const d of rawDomains) {
+  // Domain detail from contextualization-summary (has concepts, confidence, sources)
+  const ctxDomains = (ctx.domains ?? []) as Record<string, unknown>[]
+  if (Array.isArray(ctxDomains)) {
+    for (const d of ctxDomains) {
       domains.push({
-        domain: String(d.domain ?? d.name ?? ''),
-        triples: Number(d.triples ?? d.triple_count ?? d.count ?? 0),
-        concepts: Number(d.concepts ?? d.concept_count ?? 0),
-        confidence: String(d.confidence ?? d.confidence_tier ?? 'medium'),
+        domain: String(d.domain ?? ''),
+        triples: Number(d.triple_count ?? 0),
+        concepts: Number(d.concepts_used ?? 0),
+        confidence: confidenceTier(Number(d.avg_confidence ?? 0)),
       })
     }
   }
 
-  // Parse sources
-  const rawSources = (raw.source_breakdown ?? raw.sources ?? []) as Record<string, unknown>[]
-  if (Array.isArray(rawSources)) {
-    for (const s of rawSources) {
+  // Source systems from contextualization-summary
+  const ctxSources = (ctx.sources ?? []) as Record<string, unknown>[]
+  if (Array.isArray(ctxSources)) {
+    for (const s of ctxSources) {
       sources.push({
-        source: String(s.source ?? s.name ?? s.source_system ?? ''),
-        triples: Number(s.triples ?? s.triple_count ?? s.count ?? 0),
-        confidence: Number(s.confidence ?? s.avg_confidence ?? 0.85),
-        last_updated: (s.last_updated ?? s.updated_at ?? null) as string | null,
+        source: String(s.source_system ?? ''),
+        triples: Number(s.triple_count ?? 0),
+        confidence: Number(s.avg_confidence ?? 0),
+        last_updated: null,
       })
     }
   }
 
-  // Parse entity breakdown
+  // Entity breakdown from overview — entities is an array of {entity_id, triple_count, display_name}
   const entityBreakdown: Record<string, number> = {}
-  const rawEntities = (raw.entity_breakdown ?? raw.entities ?? {}) as Record<string, unknown>
-  if (typeof rawEntities === 'object' && rawEntities !== null) {
-    for (const [k, v] of Object.entries(rawEntities)) {
-      entityBreakdown[k] = Number(v)
+  const rawEntities = overview.entities
+  if (Array.isArray(rawEntities)) {
+    for (const e of rawEntities as Record<string, unknown>[]) {
+      const name = String(e.display_name ?? e.entity_id ?? '')
+      const count = Number(e.triple_count ?? 0)
+      if (name) entityBreakdown[name] = count
     }
   }
 
   return {
-    total_triples: Number(raw.total_triples ?? raw.count ?? 0),
+    total_triples: Number(overview.total_triples ?? 0),
     domains,
     sources,
     entity_breakdown: entityBreakdown,
-    pending_resolution: Number(raw.pending_resolution ?? raw.conflict_count ?? 0),
-    total_resolution: Number(raw.total_resolution ?? raw.total_conflicts ?? raw.conflict_count ?? 0),
+    pending_resolution: Number(overview.conflict_count ?? 0),
+    total_resolution: Number(overview.conflict_count ?? 0),
   }
 }
 

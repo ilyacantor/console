@@ -13,6 +13,9 @@ DCL_BASE_URL: str = os.environ.get("DCL_BASE_URL", "http://localhost:8004").rstr
 NLQ_BASE_URL: str = os.environ.get("NLQ_BASE_URL", "http://localhost:8005").rstrip("/")
 PLATFORM_BASE_URL: str = os.environ.get("PLATFORM_BASE_URL", "http://localhost:8006").rstrip("/")
 
+# Tenant
+AOS_DEV_TENANT_ID: str = os.environ.get("AOS_DEV_TENANT_ID", "")
+
 # CORS
 CORS_ORIGINS: list[str] = [
     o.strip()
