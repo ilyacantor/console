@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
+import { fetchChangeSummary } from '../api/client'
 
 interface NavItem {
   label: string
@@ -49,12 +51,30 @@ const NAV: NavSection[] = [
     title: 'SYSTEM',
     items: [
       { label: 'Config', path: '/config', color: '#9CA3AF' },
+      { label: 'Narrative', path: '/narrative-editor', color: '#9CA3AF' },
       { label: 'Policy', path: '', color: '#9CA3AF', external: 'https://aodv3-1.onrender.com' },
     ],
   },
 ]
 
 export default function Sidebar() {
+  const [badgeCount, setBadgeCount] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const s = await fetchChangeSummary()
+        if (!cancelled) setBadgeCount(s.critical + s.warning)
+      } catch {
+        // non-critical
+      }
+    }
+    load()
+    const interval = setInterval(load, 60_000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
+
   return (
     <nav
       className="flex-shrink-0 overflow-y-auto"
@@ -106,6 +126,9 @@ export default function Sidebar() {
                   }}
                 />
                 {item.label}
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" style={{ marginLeft: '2px', opacity: 0.5 }}>
+                  <path d="M3.5 1.5h7v7M10.5 1.5L1.5 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
               </a>
             ) : (
               <NavLink
@@ -135,6 +158,21 @@ export default function Sidebar() {
                   }}
                 />
                 {item.label}
+                {item.label === 'Changes' && badgeCount > 0 && (
+                  <span
+                    style={{
+                      fontSize: '9px',
+                      fontWeight: 700,
+                      background: '#EF4444',
+                      color: '#fff',
+                      borderRadius: '8px',
+                      padding: '1px 5px',
+                      marginLeft: '4px',
+                    }}
+                  >
+                    {badgeCount}
+                  </span>
+                )}
               </NavLink>
             ),
           )}

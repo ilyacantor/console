@@ -12,7 +12,8 @@ client = TestClient(app)
 
 DEMO_ENGAGEMENT = {
     "engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "entity_ids": ["meridian", "cascadia"],
+    "acquirer_entity_id": "meridian",
+    "target_entity_id": "cascadia",
     "engagement_type": "MA",
     "lifecycle_stage": "review",
     "state_json": {
@@ -47,7 +48,8 @@ def test_get_engagement(mock_get):
     assert resp.status_code == 200
     data = resp.json()
     assert data["lifecycle_stage"] == "review"
-    assert data["entity_ids"] == ["meridian", "cascadia"]
+    assert data["acquirer_entity_id"] == "meridian"
+    assert data["target_entity_id"] == "cascadia"
 
 
 @patch("backend.app.routes.engagements.db.get_engagement")
@@ -102,3 +104,53 @@ def test_update_engagement_not_found(mock_get):
         json={"lifecycle_stage": "deliver"},
     )
     assert resp.status_code == 404
+
+
+@patch("backend.app.routes.engagements.db.get_engagement")
+@patch("backend.app.routes.engagements.db.create_engagement")
+def test_create_engagement(mock_create, mock_get):
+    """POST /api/engagements creates a new engagement."""
+    mock_create.return_value = "new-eng-001"
+    mock_get.return_value = {
+        "engagement_id": "new-eng-001",
+        "acquirer_entity_id": "meridian",
+        "target_entity_id": "cascadia",
+        "engagement_type": "MA",
+        "lifecycle_stage": "upload",
+        "state_json": {},
+        "created_at": "2026-03-25T10:00:00+00:00",
+        "updated_at": "2026-03-25T10:00:00+00:00",
+    }
+
+    resp = client.post(
+        "/api/engagements",
+        json={
+            "acquirer_entity_id": "meridian",
+            "target_entity_id": "cascadia",
+            "engagement_type": "MA",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["engagement_id"] == "new-eng-001"
+    assert data["acquirer_entity_id"] == "meridian"
+    assert data["target_entity_id"] == "cascadia"
+    assert data["lifecycle_stage"] == "upload"
+    mock_create.assert_called_once_with(
+        acquirer_entity_id="meridian",
+        target_entity_id="cascadia",
+        engagement_type="MA",
+    )
+
+
+@patch("backend.app.routes.engagements.db.get_engagement")
+def test_directional_schema(mock_get):
+    """Engagement has directional fields: acquirer_entity_id and target_entity_id."""
+    mock_get.return_value = DEMO_ENGAGEMENT
+    resp = client.get(f"/api/engagements/{DEMO_ENGAGEMENT['engagement_id']}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "acquirer_entity_id" in data
+    assert "target_entity_id" in data
+    assert data["acquirer_entity_id"] == "meridian"
+    assert data["target_entity_id"] == "cascadia"

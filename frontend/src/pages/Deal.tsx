@@ -177,7 +177,7 @@ function LifecycleStrip({ currentStage }: { currentStage: string }) {
         })}
       </div>
       <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-        Meridian Partners + Cascadia Process Solutions
+        Meridian + Cascadia
       </span>
     </div>
   )

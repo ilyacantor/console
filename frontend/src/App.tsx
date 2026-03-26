@@ -12,6 +12,7 @@ import Engagements from './pages/Engagements'
 import Constitution from './pages/Constitution'
 import Instrumentation from './pages/Instrumentation'
 import Config from './pages/Config'
+import NarrativeEditor from './pages/NarrativeEditor'
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/constitution" element={<Constitution />} />
         <Route path="/instrumentation" element={<Instrumentation />} />
         <Route path="/config" element={<Config />} />
+        <Route path="/narrative-editor" element={<NarrativeEditor />} />
       </Routes>
     </Layout>
   )

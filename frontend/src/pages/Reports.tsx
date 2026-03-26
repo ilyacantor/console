@@ -1,8 +1,8 @@
+import ModuleIframe from '../components/ModuleIframe'
+
+// NLQ has no URL routing — deep linking to reports view not supported yet
+const NLQ_BASE = import.meta.env.VITE_NLQ_URL || 'http://localhost:3005'
+
 export default function Reports() {
-  return (
-    <div style={{ padding: '24px' }}>
-      <h1 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Reports</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Coming in Phase 5</p>
-    </div>
-  )
+  return <ModuleIframe serviceName="NLQ" baseUrl={NLQ_BASE} title="NLQ Reports" />
 }

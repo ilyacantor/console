@@ -11,10 +11,16 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app import config, db
+from backend.app.routes.changes import router as changes_router
+from backend.app.routes.config import router as config_router
 from backend.app.routes.engagements import router as engagements_router
 from backend.app.routes.health import router as health_router
+from backend.app.routes.instrumentation import router as instrumentation_router
+from backend.app.routes.narrative import router as narrative_router
 from backend.app.routes.pipeline import router as pipeline_router
 from backend.app.routes.proxy import router as proxy_router
+from backend.app.routes.upload import router as upload_router
+from backend.app.services import cron_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,11 +37,13 @@ async def lifespan(app: FastAPI):
     logger.info("Console starting up")
     try:
         await db.init_pool()
+        await cron_scheduler.start_scheduler()
     except Exception as exc:
         logger.warning(f"Database initialization failed — running without DB: {exc}")
 
     yield
 
+    await cron_scheduler.stop_scheduler()
     await db.close_pool()
     logger.info("Console shut down")
 
@@ -60,6 +68,11 @@ app.include_router(health_router, prefix="/api", tags=["Health"])
 app.include_router(pipeline_router, prefix="/api/pipeline", tags=["Pipeline"])
 app.include_router(proxy_router, prefix="/api/proxy", tags=["Proxy"])
 app.include_router(engagements_router, prefix="/api/engagements", tags=["Engagements"])
+app.include_router(changes_router, prefix="/api/changes", tags=["Changes"])
+app.include_router(config_router, prefix="/api/config", tags=["Config"])
+app.include_router(upload_router, prefix="/api/upload", tags=["Upload"])
+app.include_router(instrumentation_router, prefix="/api/instrumentation", tags=["Instrumentation"])
+app.include_router(narrative_router, prefix="/api/narrative", tags=["Narrative"])
 
 
 @app.get("/health")

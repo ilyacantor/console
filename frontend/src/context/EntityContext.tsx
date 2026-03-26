@@ -6,8 +6,8 @@ export interface Entity {
 }
 
 const ENTITIES: Entity[] = [
-  { id: 'meridian', label: 'Meridian Partners' },
-  { id: 'cascadia', label: 'Cascadia Process Solutions' },
+  { id: 'meridian', label: 'Meridian' },
+  { id: 'cascadia', label: 'Cascadia' },
 ]
 
 interface EntityContextValue {

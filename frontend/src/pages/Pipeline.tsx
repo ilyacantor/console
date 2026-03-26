@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import HealthStrip from '../components/HealthStrip'
 import {
-  fetchHealth,
   fetchRuns,
   fetchBaselines,
   updateBaselines,
   runPipeline,
   resetPipeline,
-  type HealthResponse,
   type PipelineRun,
   type PipelineStep,
   type Baselines,
 } from '../api/client'
 import { useEntity } from '../context/EntityContext'
+import { useHealth } from '../context/HealthContext'
 
 // Step name → baseline key mapping
 const BASELINE_KEYS: Record<string, string> = {
@@ -65,28 +64,14 @@ function progressBarColor(actual: number | null, baseline: number | null): strin
 
 export default function Pipeline() {
   const { entities, selected } = useEntity()
+  const { health } = useHealth()
   const [mode, setMode] = useState<'SE' | 'ME'>('SE')
-  const [health, setHealth] = useState<HealthResponse | null>(null)
   const [currentRun, setCurrentRun] = useState<PipelineRun | null>(null)
   const [runs, setRuns] = useState<PipelineRun[]>([])
   const [baselines, setBaselines] = useState<Baselines>({})
   const [running, setRunning] = useState(false)
   const [expandedRun, setExpandedRun] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  // Load health
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const data = await fetchHealth()
-        if (!cancelled) setHealth(data)
-      } catch { /* non-critical */ }
-    }
-    load()
-    const interval = setInterval(load, 30_000)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [])
 
   // Load runs and baselines
   const loadRuns = useCallback(async () => {

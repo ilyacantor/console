@@ -1,25 +1,9 @@
-import { useEffect, useState } from 'react'
 import { useEntity } from '../context/EntityContext'
-import { fetchHealth, type HealthResponse } from '../api/client'
+import { useHealth } from '../context/HealthContext'
 
 export default function TopBar() {
   const { entities, selected, setSelected } = useEntity()
-  const [health, setHealth] = useState<HealthResponse | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const data = await fetchHealth()
-        if (!cancelled) setHealth(data)
-      } catch {
-        // Health fetch failed — don't crash the header
-      }
-    }
-    load()
-    const interval = setInterval(load, 30_000)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [])
+  const { health } = useHealth()
 
   const healthText = health
     ? `${health.up_count}/${health.total} healthy`

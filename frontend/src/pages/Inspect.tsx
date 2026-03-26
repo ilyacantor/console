@@ -5,6 +5,7 @@ import {
   fetchDclCofaAdjustments,
 } from '../api/client'
 import { type CofaMergeRow, SEED_COFA_MERGE } from '../data/deal-seed'
+import ModuleIframe from '../components/ModuleIframe'
 
 type Tab = 'coverage' | 'sources' | 'lineage' | 'cofa'
 
@@ -316,27 +317,15 @@ function SourcesTab({ sources }: { sources: SourceInfo[] }) {
 /* --- Lineage tab --- */
 
 function LineageTab() {
-  const [iframeLoaded, setIframeLoaded] = useState(false)
-
   return (
     <div style={cardStyle}>
-      {!iframeLoaded && (
-        <div style={{ color: 'var(--text-muted)', fontSize: '12px', padding: '20px', textAlign: 'center' }}>
-          Loading DCL lineage view...
-        </div>
-      )}
-      <iframe
-        src={DCL_BASE}
-        onLoad={() => setIframeLoaded(true)}
-        style={{
-          width: '100%',
-          minHeight: '500px',
-          height: 'calc(100vh - 280px)',
-          border: 'none',
-          borderRadius: '8px',
-          display: iframeLoaded ? 'block' : 'none',
-        }}
+      <ModuleIframe
+        serviceName="DCL"
+        baseUrl={DCL_BASE}
         title="DCL Lineage"
+        entityParam={false}
+        minHeight="500px"
+        height="calc(100vh - 280px)"
       />
     </div>
   )

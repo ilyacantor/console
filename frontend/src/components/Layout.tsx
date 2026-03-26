@@ -1,8 +1,13 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import { useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
+import MaestraFloat from './MaestraPanel'
 
 export default function Layout({ children }: { children: ReactNode }) {
+  const [floatSideOpen, setFloatSideOpen] = useState(false)
+  const location = useLocation()
+
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg-base)' }}>
       <TopBar />
@@ -10,32 +15,21 @@ export default function Layout({ children }: { children: ReactNode }) {
         <Sidebar />
         <main
           className="flex-1 overflow-auto"
-          style={{ background: 'var(--bg-base)', padding: '14px' }}
+          style={{
+            background: 'var(--bg-base)',
+            padding: '14px',
+            marginRight: floatSideOpen ? '420px' : 0,
+            transition: 'margin-right 0.2s ease',
+          }}
         >
           {children}
         </main>
       </div>
 
-      {/* M button — non-functional in Phase 1 */}
-      <button
-        className="fixed z-50 flex items-center justify-center cursor-default"
-        style={{
-          bottom: '20px',
-          right: '20px',
-          width: '40px',
-          height: '40px',
-          borderRadius: '50%',
-          background: '#7C3AED',
-          color: '#fff',
-          fontWeight: 700,
-          fontSize: '16px',
-          border: 'none',
-          boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
-        }}
-        title="Maestra (coming soon)"
-      >
-        M
-      </button>
+      <MaestraFloat
+        currentPage={location.pathname}
+        onSideOpen={setFloatSideOpen}
+      />
     </div>
   )
 }

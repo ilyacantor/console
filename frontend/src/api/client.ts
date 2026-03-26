@@ -97,7 +97,8 @@ export function updateBaselines(baselines: Baselines): Promise<{ status: string 
 // Engagements
 export interface Engagement {
   engagement_id: string
-  entity_ids: string[]
+  acquirer_entity_id: string
+  target_entity_id: string
   engagement_type: string
   lifecycle_stage: string
   state_json: Record<string, unknown>
@@ -119,6 +120,27 @@ export function updateEngagement(
 ): Promise<Engagement> {
   return fetchJSON(`/api/engagements/${id}`, {
     method: 'PATCH',
+    body: JSON.stringify(data),
+  })
+}
+
+export interface EngagementHistoryEvent {
+  timestamp: string | null
+  source: string
+  description: string
+}
+
+export function fetchEngagementHistory(id: string, limit = 50): Promise<{ events: EngagementHistoryEvent[] }> {
+  return fetchJSON(`/api/engagements/${id}/history?limit=${limit}`)
+}
+
+export function createEngagement(data: {
+  acquirer_entity_id: string
+  target_entity_id: string
+  engagement_type: string
+}): Promise<Engagement> {
+  return fetchJSON('/api/engagements', {
+    method: 'POST',
     body: JSON.stringify(data),
   })
 }
@@ -145,3 +167,187 @@ export function fetchDclCombiningIncomeStatement(
 export function fetchDclBridge(): Promise<unknown> {
   return fetchJSON('/api/proxy/dcl/api/dcl/reports/v2/bridge')
 }
+
+// Changes
+export interface ChangeEvent {
+  id: string
+  timestamp: string
+  source_module: string
+  event_type: string
+  entity_id: string | null
+  summary: string
+  detail: string | null
+  severity: 'critical' | 'warning' | 'info'
+  payload: Record<string, unknown>
+  acknowledged: boolean
+  created_at: string
+}
+
+export interface ChangeSummary {
+  critical: number
+  warning: number
+  info: number
+  last_scan: string | null
+}
+
+export function fetchChanges(params?: {
+  since?: string
+  severity?: string
+  module?: string
+  limit?: number
+  acknowledged?: boolean
+}): Promise<{ events: ChangeEvent[]; count: number }> {
+  const qs = new URLSearchParams()
+  if (params?.since) qs.set('since', params.since)
+  if (params?.severity) qs.set('severity', params.severity)
+  if (params?.module) qs.set('module', params.module)
+  if (params?.limit) qs.set('limit', String(params.limit))
+  if (params?.acknowledged !== undefined) qs.set('acknowledged', String(params.acknowledged))
+  const query = qs.toString()
+  return fetchJSON(`/api/changes${query ? `?${query}` : ''}`)
+}
+
+export function acknowledgeChange(eventId: string): Promise<{ status: string }> {
+  return fetchJSON(`/api/changes/${eventId}/acknowledge`, { method: 'POST' })
+}
+
+export function fetchChangeSummary(): Promise<ChangeSummary> {
+  return fetchJSON('/api/changes/summary')
+}
+
+export function triggerDetection(module: string): Promise<{ status: string; events_detected: number }> {
+  return fetchJSON(`/api/changes/detect/${module}`, { method: 'POST' })
+}
+
+// Upload
+export interface UploadResult {
+  upload_id: string
+  engagement_id: string | null
+  entity_id: string
+  file_name: string
+  file_type: string
+  file_size: number
+  parse_result: {
+    file_name?: string
+    file_type?: string
+    rows?: number
+    accounts?: number
+    periods?: number
+    format?: string
+    hierarchy_levels?: number
+    validations?: { check: string; pass: boolean; detail: string }[]
+    error?: string
+  } | null
+  status: string
+  created_at: string | null
+}
+
+export async function uploadFile(
+  file: File,
+  entityId: string,
+  engagementId?: string,
+): Promise<UploadResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('entity_id', entityId)
+  if (engagementId) form.append('engagement_id', engagementId)
+  const resp = await fetch('/api/upload', { method: 'POST', body: form })
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`
+    try { const b = await resp.json(); if (b.detail) detail = b.detail } catch {}
+    throw new Error(detail)
+  }
+  return resp.json()
+}
+
+export function fetchUploadStatus(uploadId: string): Promise<UploadResult> {
+  return fetchJSON(`/api/upload/status/${uploadId}`)
+}
+
+export function proceedUpload(uploadId: string): Promise<{ upload_id: string; status: string; conversion: Record<string, unknown> }> {
+  return fetchJSON(`/api/upload/proceed/${uploadId}`, { method: 'POST' })
+}
+
+// Config
+export function fetchConfig(): Promise<{ config: Record<string, unknown> }> {
+  return fetchJSON('/api/config')
+}
+
+export function fetchCronLastRuns(): Promise<{ last_runs: Record<string, string | null> }> {
+  return fetchJSON('/api/config/cron-last-runs')
+}
+
+export function updateConfig(data: Record<string, unknown>): Promise<{ status: string; config: Record<string, unknown> }> {
+  return fetchJSON('/api/config', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+// Instrumentation
+export interface MaestraRun {
+  run_id: string
+  engagement_id: string | null
+  step_name: string
+  run_tag: string | null
+  model_version: string | null
+  constitution_version: string | null
+  duration_s: number | null
+  tokens_in: number | null
+  tokens_out: number | null
+  cost_usd: number | null
+  status: string
+  error_detail: string | null
+  created_at: string | null
+}
+
+export interface InstrumentationSummary {
+  total_runs: number
+  total_tokens: number
+  total_cost: number
+  avg_duration_s: number
+}
+
+export function fetchInstrumentationRuns(params?: {
+  engagement_id?: string
+  step_name?: string
+  limit?: number
+}): Promise<{ runs: MaestraRun[]; count: number }> {
+  const qs = new URLSearchParams()
+  if (params?.engagement_id) qs.set('engagement_id', params.engagement_id)
+  if (params?.step_name) qs.set('step_name', params.step_name)
+  if (params?.limit) qs.set('limit', String(params.limit))
+  const query = qs.toString()
+  return fetchJSON(`/api/instrumentation/runs${query ? `?${query}` : ''}`)
+}
+
+export function fetchInstrumentationSummary(engagementId?: string): Promise<InstrumentationSummary> {
+  const qs = engagementId ? `?engagement_id=${engagementId}` : ''
+  return fetchJSON(`/api/instrumentation/summary${qs}`)
+}
+
+// Narrative
+export interface NarrativeStep {
+  id: string
+  title: string
+  phase: string
+  description: string
+  messages: { text: string; delay_ms: number }[]
+}
+
+export interface Narrative {
+  steps: NarrativeStep[]
+}
+
+export function fetchNarrative(): Promise<{ narrative: Narrative }> {
+  return fetchJSON('/api/narrative')
+}
+
+export function updateNarrative(narrative: Narrative): Promise<{ status: string; narrative: Narrative }> {
+  return fetchJSON('/api/narrative', {
+    method: 'PUT',
+    body: JSON.stringify(narrative),
+  })
+}
+
+// Maestra chat is handled by useMaestraStream hook — no client.ts function needed
