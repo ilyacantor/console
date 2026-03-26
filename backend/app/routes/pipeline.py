@@ -127,8 +127,18 @@ async def advance_pipeline(job_id: str, background_tasks: BackgroundTasks):
 async def run_pipeline_legacy(req: dict):
     """Legacy blocking pipeline run — redirects to new start endpoint."""
     mode_str = req.get("mode", "SE").upper()
+    if mode_str not in ("SE", "ME"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid mode '{mode_str}'. Must be 'SE' or 'ME'.",
+        )
     mode = PipelineMode.SE if mode_str == "SE" else PipelineMode.ME
     entities = req.get("entities", [])
+    if mode == PipelineMode.ME and len(entities) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="ME mode requires at least 2 entities.",
+        )
 
     import uuid
     job_id = str(uuid.uuid4())[:8]

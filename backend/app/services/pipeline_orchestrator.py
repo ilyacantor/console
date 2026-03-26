@@ -475,7 +475,7 @@ async def _step_farm_financials(
             "category": category,
         },
         "target": {
-            "dcl_url": f"{dcl_url}/api/dcl/ingest",
+            "dcl_url": f"{dcl_url}/api/dcl/ingest-triples",
             "tenant_id": tenant_id or "",
             "snapshot_name": snapshot_name,
             "entity_id": tenant_id or "",
@@ -504,6 +504,14 @@ async def _step_farm_financials(
 
     if resp.status_code == 200:
         data = resp.json()
+        farm_status = data.get("status", "completed")
+        if farm_status not in ("completed", "skipped"):
+            push = data.get("push_result") or {}
+            error_detail = push.get("error") or farm_status
+            _mark_step(step, StepStatus.FAILED,
+                       f"DCL ingest failed (Farm status={farm_status}): {error_detail}",
+                       data=data, start_time=t0)
+            return
         rows = data.get("rows_generated", 0)
         push = data.get("push_result") or {}
         accepted = push.get("rows_accepted")

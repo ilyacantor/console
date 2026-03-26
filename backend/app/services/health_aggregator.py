@@ -55,6 +55,27 @@ async def _check_one(
         elapsed = round(time.monotonic() - t0, 2)
 
         if resp.status_code == 200:
+            # For DCL: HTTP 200 is not enough — inspect functional readiness fields.
+            # DCL always returns 200 even in degraded/warming state with no graph.
+            if name == "DCL":
+                body: dict = {}
+                try:
+                    body = resp.json()
+                except Exception:
+                    pass
+                phase = body.get("phase", "ready")
+                graph_ready = body.get("graph_ready", True)
+                pg_ok = body.get("postgres_available", True)
+                error = body.get("error")
+                if phase not in ("ready", "degraded") or not graph_ready or not pg_ok:
+                    return ServiceStatus(
+                        name=name,
+                        url=url,
+                        status="degraded",
+                        response_time_s=elapsed,
+                        detail=error or f"phase={phase}, graph_ready={graph_ready}, postgres={pg_ok}",
+                        standalone_url=standalone,
+                    )
             return ServiceStatus(
                 name=name,
                 url=url,
