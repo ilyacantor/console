@@ -25,7 +25,7 @@ def _mock_farm_status_idle():
         "status": "idle",
         "run_id": "test-run-123",
         "error": None,
-        "push_result": {"total_triples": 9350},
+        "push_result": {"success": True, "pushed": 9350, "total": 9350},
     })
 
 

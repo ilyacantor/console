@@ -156,7 +156,7 @@ async def _step_farm_generate(
                 return
 
             push_result = status_data.get("push_result") or {}
-            triples = push_result.get("total_triples", 0)
+            triples = push_result.get("total") or push_result.get("pushed") or 0
             if isinstance(triples, (int, float)):
                 step.triples = int(triples)
 
@@ -178,8 +178,12 @@ async def _step_dcl_verify(
     """Verify triples landed in DCL."""
     url = f"{config.DCL_BASE_URL}/api/dcl/triples/overview"
 
+    params = {}
+    if config.AOS_DEV_TENANT_ID:
+        params["tenant_id"] = config.AOS_DEV_TENANT_ID
+
     try:
-        resp = await client.get(url)
+        resp = await client.get(url, params=params)
     except httpx.ConnectError:
         step.status = "failed"
         step.error = (
@@ -203,7 +207,8 @@ async def _step_dcl_verify(
     data = resp.json()
     total = data.get("total_triples", data.get("count", 0))
     step.triples = int(total) if total else 0
-    step.detail = f"DCL has {step.triples:,} triples"
+    scope = f" (tenant={config.AOS_DEV_TENANT_ID})" if config.AOS_DEV_TENANT_ID else " (all tenants)"
+    step.detail = f"DCL has {step.triples:,} active triples{scope}"
     step.status = "success"
 
 
