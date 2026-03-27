@@ -737,7 +737,7 @@ async def run_pipeline_batch(job_id: str) -> None:
 
     job.status = "running"
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=240.0) as client:
         context: dict[str, Any] = {}
         i = 0
         while i < len(job.steps):
@@ -831,7 +831,7 @@ async def run_single_step(job_id: str, step_indices: list[int]) -> None:
 
     job.status = "running"
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=240.0) as client:
         context = _extract_job_context(job)
 
         if len(step_indices) > 1:
