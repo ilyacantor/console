@@ -475,7 +475,7 @@ async def _step_farm_financials(
             "category": category,
         },
         "target": {
-            "dcl_url": f"{dcl_url}/api/dcl/ingest-triples",
+            "dcl_url": f"{dcl_url}/api/dcl/ingest",
             "tenant_id": tenant_id or "",
             "snapshot_name": snapshot_name,
             "entity_id": tenant_id or "",

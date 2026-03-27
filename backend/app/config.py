@@ -2,6 +2,10 @@
 
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Database
 SUPABASE_DB_URL: str = os.environ.get("SUPABASE_DB_URL", "")
 
