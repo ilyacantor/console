@@ -15,7 +15,7 @@ def _farm_manifest_response(rows: int = 9350):
     return httpx.Response(200, json={
         "status": "completed",
         "rows_generated": rows,
-        "push_result": {"rows_accepted": rows},
+        "push_result": {"rows_accepted": rows, "batch_count": (rows + 999) // 1000},
     })
 
 

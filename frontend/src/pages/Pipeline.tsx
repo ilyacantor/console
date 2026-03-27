@@ -329,6 +329,72 @@ function PipelineFlow({
   )
 }
 
+// ── Farm Push Summary ───────────────────────────────────────────────
+
+function FarmPushSummary({ steps }: { steps: PipelineStepData[] }) {
+  const farmStep = steps.find((s) => s.name === 'farm_financials')
+  if (!farmStep || !farmStep.data) return null
+  if (farmStep.status !== 'success' && farmStep.status !== 'failed') return null
+
+  const data = farmStep.data as Record<string, any>
+  const rowsGenerated = data.rows_generated ?? null
+  const push = (data.push_result ?? {}) as Record<string, any>
+  const rowsAccepted = push.rows_accepted ?? null
+  const tTotal = data.t_total_ms ?? farmStep.duration_ms
+  const tPush = data.t_push_ms ?? null
+
+  return (
+    <div
+      style={{
+        marginTop: '10px',
+        display: 'flex',
+        gap: '24px',
+        padding: '8px 14px',
+        background: '#111318',
+        border: '0.5px solid var(--border)',
+        borderRadius: '8px',
+        fontSize: '12px',
+        fontFamily: 'monospace',
+        color: '#9CA3AF',
+      }}
+    >
+      <div>
+        <span style={{ color: '#6B7280', marginRight: '6px' }}>Volume</span>
+        {rowsGenerated != null ? (
+          <>
+            <span style={{ color: '#E5E7EB' }}>{rowsGenerated.toLocaleString()}</span>
+            <span> triples</span>
+            {rowsAccepted != null && rowsAccepted !== rowsGenerated && (
+              <span style={{ color: rowsAccepted < rowsGenerated ? '#FBBF24' : '#4ADE80' }}>
+                {' '}({rowsAccepted.toLocaleString()} accepted)
+              </span>
+            )}
+          </>
+        ) : (
+          <span>—</span>
+        )}
+      </div>
+      <div>
+        <span style={{ color: '#6B7280', marginRight: '6px' }}>Batches</span>
+        <span style={{ color: '#E5E7EB' }}>{push.batch_count != null ? push.batch_count : '—'}</span>
+      </div>
+      <div>
+        <span style={{ color: '#6B7280', marginRight: '6px' }}>Duration</span>
+        {tTotal != null ? (
+          <>
+            <span style={{ color: '#E5E7EB' }}>{formatDuration(tTotal)}</span>
+            {tPush != null && (
+              <span> (push {formatDuration(tPush)})</span>
+            )}
+          </>
+        ) : (
+          <span>—</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Step Detail Panel ───────────────────────────────────────────────
 
 function StepDetail({ step }: { step: PipelineStepData }) {
@@ -707,6 +773,9 @@ export default function Pipeline() {
             selectedStepName={selectedStepName}
             onSelectStep={setSelectedStepName}
           />
+
+          {/* Farm Push Summary */}
+          {jobData.pipeline_mode === 'se' && <FarmPushSummary steps={jobData.steps} />}
 
           {/* Step Detail */}
           {selectedStep && <StepDetail step={selectedStep} />}
