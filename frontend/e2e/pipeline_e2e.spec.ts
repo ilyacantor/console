@@ -97,6 +97,31 @@ test.describe('Pipeline ME batch run', () => {
   })
 })
 
+test.describe('Pipeline Farm Push Summary', () => {
+  test('SE pipeline shows Farm push summary with volume, batches, duration', async ({ page }) => {
+    test.setTimeout(300_000) // Farm triple push can take 2-3 minutes under DB load
+    await page.goto('/pipeline')
+    const m = main(page)
+
+    // Start SE batch pipeline
+    await m.getByRole('button', { name: /Run SE/i }).click()
+
+    // Wait for FarmPushSummary to appear (renders once farm_financials step succeeds or fails)
+    const summary = m.locator('[data-testid="farm-push-summary"]')
+    await expect(summary).toBeVisible({ timeout: 270_000 })
+
+    // All three metric labels must be present
+    await expect(summary.getByText('Volume')).toBeVisible()
+    await expect(summary.getByText('Batches')).toBeVisible()
+    await expect(summary.getByText('Duration')).toBeVisible()
+
+    // Volume should show a number followed by "triples"
+    await expect(summary.getByText(/\d.*triples/)).toBeVisible()
+
+    await page.screenshot({ path: 'e2e/screenshots/pipeline-farm-push-summary.png' })
+  })
+})
+
 test.describe('Pipeline step-by-step mode', () => {
   test('step mode shows Next Step button', async ({ page }) => {
     await page.goto('/pipeline')

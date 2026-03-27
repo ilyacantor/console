@@ -345,6 +345,7 @@ function FarmPushSummary({ steps }: { steps: PipelineStepData[] }) {
 
   return (
     <div
+      data-testid="farm-push-summary"
       style={{
         marginTop: '10px',
         display: 'flex',
