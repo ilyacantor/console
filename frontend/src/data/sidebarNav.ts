@@ -54,6 +54,7 @@ const MAI: NavSection = {
     { label: 'Tasks', path: '/tasks', color: '#7C3AED' },
     { label: 'Constitution', path: '/constitution', color: '#7C3AED' },
     { label: 'Instrumentation', path: '/instrumentation', color: '#7C3AED' },
+    { label: 'Operator Feed', path: '/operator-feed', color: '#7C3AED' },
   ],
 }
 

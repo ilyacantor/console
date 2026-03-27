@@ -17,6 +17,7 @@ from backend.app.routes.engagements import router as engagements_router
 from backend.app.routes.health import router as health_router
 from backend.app.routes.instrumentation import router as instrumentation_router
 from backend.app.routes.narrative import router as narrative_router
+from backend.app.routes.operator_feed import router as operator_feed_router
 from backend.app.routes.pipeline import router as pipeline_router
 from backend.app.routes.proxy import router as proxy_router
 from backend.app.routes.upload import router as upload_router
@@ -73,6 +74,7 @@ app.include_router(config_router, prefix="/api/config", tags=["Config"])
 app.include_router(upload_router, prefix="/api/upload", tags=["Upload"])
 app.include_router(instrumentation_router, prefix="/api/instrumentation", tags=["Instrumentation"])
 app.include_router(narrative_router, prefix="/api/narrative", tags=["Narrative"])
+app.include_router(operator_feed_router, prefix="/api/operator-feed", tags=["Operator Feed"])
 
 
 @app.get("/health")

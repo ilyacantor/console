@@ -55,6 +55,59 @@ def is_connected() -> bool:
     return _pool is not None
 
 
+# ---------------------------------------------------------------------------
+# Tenant registry lookups (reads public.tenant_registry created by DCL migration)
+# ---------------------------------------------------------------------------
+
+async def get_entity(entity_id: str) -> dict[str, str] | None:
+    """Look up a single entity from the tenant registry.
+
+    Returns {"entity_id": str, "tenant_id": str, "entity_name": str} or None.
+    """
+    if not _pool:
+        return None
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT entity_id, tenant_id::text, entity_name "
+            "FROM tenant_registry WHERE entity_id = $1",
+            entity_id,
+        )
+        if not row:
+            return None
+        return {
+            "entity_id": row["entity_id"],
+            "tenant_id": row["tenant_id"],
+            "entity_name": row["entity_name"],
+        }
+
+
+async def list_entities_for_tenant(tenant_id: str) -> list[dict[str, str]]:
+    """Return all entities under a tenant_id."""
+    if not _pool:
+        return []
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT entity_id, tenant_id::text, entity_name "
+            "FROM tenant_registry WHERE tenant_id = $1::uuid "
+            "ORDER BY entity_id",
+            tenant_id,
+        )
+        return [
+            {
+                "entity_id": r["entity_id"],
+                "tenant_id": r["tenant_id"],
+                "entity_name": r["entity_name"],
+            }
+            for r in rows
+        ]
+
+
+async def get_entity_name(entity_id: str) -> str | None:
+    """Display lookup: return entity_name for an entity_id, or None."""
+    entry = await get_entity(entity_id)
+    return entry["entity_name"] if entry else None
+
+
 async def _ensure_schema() -> None:
     """Create console schema and tables if they don't exist."""
     if not _pool:

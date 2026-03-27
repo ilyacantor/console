@@ -449,3 +449,47 @@ export function updateNarrative(narrative: Narrative): Promise<{ status: string;
 }
 
 // Maestra chat is handled by useMaestraStream hook — no client.ts function needed
+
+// Operator Feed — Maestra plans (proxied from Platform)
+export interface MaestraPlan {
+  id: string
+  tenant_id: string
+  plan_type: 'tier_1_auto' | 'tier_2_validate' | 'tier_3_plan' | 'tier_4_escalate'
+  status: 'pending' | 'approved' | 'rejected' | 'executing' | 'executed' | 'failed'
+  title: string
+  rationale: string
+  customer_message: string
+  affected_modules: string[]
+  impact_analysis: string | null
+  plan_body: Record<string, unknown> | null
+  cc_prompt: string | null
+  harness_expectations: string | null
+  rollback_plan: string | null
+  approved_by: string | null
+  executed_at: string | null
+  execution_log: Record<string, unknown> | null
+  result_summary: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MaestraPlansResponse {
+  plans: MaestraPlan[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export function fetchOperatorFeedPlans(params: {
+  tenant_id: string
+  status?: string
+  limit?: number
+  offset?: number
+}): Promise<MaestraPlansResponse> {
+  const qs = new URLSearchParams()
+  qs.set('tenant_id', params.tenant_id)
+  if (params.status) qs.set('status', params.status)
+  if (params.limit) qs.set('limit', String(params.limit))
+  if (params.offset) qs.set('offset', String(params.offset))
+  return fetchJSON(`/api/operator-feed/plans?${qs.toString()}`)
+}

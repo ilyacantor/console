@@ -17,6 +17,7 @@ import DueDiligence from './pages/DueDiligence'
 import Integration from './pages/Integration'
 import Merge from './pages/Merge'
 import Context from './pages/Context'
+import OperatorFeed from './pages/OperatorFeed'
 
 export default function App() {
   return (
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/narrative-editor" element={<NarrativeEditor />} />
         <Route path="/merge" element={<Merge />} />
         <Route path="/context" element={<Context />} />
+        <Route path="/operator-feed" element={<OperatorFeed />} />
       </Routes>
     </Layout>
   )

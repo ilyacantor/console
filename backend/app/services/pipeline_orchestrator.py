@@ -191,14 +191,18 @@ async def _step_farm_snapshot(
     """SE Step 1: Create Farm snapshot."""
     url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL, "Farm Snapshot")
     cfg = job.config
+    tenant_id = context.get("tenant_id") or cfg.get("tenant_id") or config.AOS_DEV_TENANT_ID
+    entity_id = context.get("entity_id") or cfg.get("entity_id")
+    entity_name = context.get("entity_name")
+
     body: dict[str, Any] = {
         "seed": cfg.get("seed", 42),
         "scale": cfg.get("scale", "medium"),
     }
-    if cfg.get("tenant_id"):
-        body["tenant_id"] = cfg["tenant_id"]
-    elif config.AOS_DEV_TENANT_ID:
-        body["tenant_id"] = config.AOS_DEV_TENANT_ID
+    if tenant_id:
+        body["tenant_id"] = tenant_id
+    if entity_id:
+        body["entity_id"] = entity_id
     if cfg.get("enterprise_profile"):
         body["enterprise_profile"] = cfg["enterprise_profile"]
 
@@ -220,8 +224,8 @@ async def _step_farm_snapshot(
     if resp.status_code == 200:
         data = resp.json()
         context["snapshot_id"] = data.get("snapshot_id")
-        context["tenant_id"] = data.get("tenant_id") or cfg.get("tenant_id")
-        provenance = data.get("tenant_name") or data.get("tenant_id")
+        # Provenance uses entity_name from registry (stable across runs)
+        provenance = entity_name or entity_id or data.get("tenant_id")
         if provenance:
             context["provenance_tag"] = provenance
             for s in job.steps:
@@ -256,12 +260,7 @@ async def _step_farm_snapshot(
                     result = poll_data.get("result", {})
                     context["snapshot_id"] = (result.get("snapshot_id")
                                               or data.get("snapshot_id"))
-                    context["tenant_id"] = (result.get("tenant_id")
-                                            or cfg.get("tenant_id"))
-                    provenance = (result.get("tenant_name")
-                                  or data.get("tenant_name")
-                                  or result.get("tenant_id")
-                                  or cfg.get("tenant_id"))
+                    provenance = entity_name or entity_id or result.get("tenant_id")
                     if provenance:
                         context["provenance_tag"] = provenance
                         for s in job.steps:
@@ -300,6 +299,7 @@ async def _step_aod_discovery(
 
     snapshot_id = context.get("snapshot_id")
     tenant_id = context.get("tenant_id") or job.config.get("tenant_id")
+    entity_id = context.get("entity_id") or job.config.get("entity_id")
 
     if not snapshot_id:
         _mark_step(step, StepStatus.FAILED,
@@ -314,6 +314,8 @@ async def _step_aod_discovery(
     }
     if tenant_id:
         body["tenant_id"] = tenant_id
+    if entity_id:
+        body["entity_id"] = entity_id
 
     try:
         resp = await client.post(f"{url}/api/runs/from-farm",
@@ -456,16 +458,26 @@ async def _step_farm_financials(
     farm_cfg = cfg.get(config_key, {})
 
     run_id = context.get("run_id") or str(uuid.uuid4())
-    tenant_id = (farm_cfg.get("tenant_id")
-                 or context.get("tenant_id")
+    tenant_id = (context.get("tenant_id")
+                 or farm_cfg.get("tenant_id")
                  or cfg.get("tenant_id")
                  or config.AOS_DEV_TENANT_ID)
+    entity_id = (farm_cfg.get("entity_id")
+                 or context.get("entity_id")
+                 or cfg.get("entity_id"))
     snapshot_name = (farm_cfg.get("snapshot_name")
                      or context.get("snapshot_id")
                      or "latest")
     pipe_id = farm_cfg.get("pipe_id", f"{step.name}-financials")
     system = farm_cfg.get("system", "netsuite")
     category = farm_cfg.get("category", "erp")
+
+    if not entity_id:
+        _mark_step(step, StepStatus.FAILED,
+                   f"No entity_id available for {step.display_name} — "
+                   f"cannot look up Farm config. Ensure engagement has entity_id set.",
+                   start_time=t0)
+        return
 
     body: dict[str, Any] = {
         "run_id": run_id,
@@ -478,7 +490,7 @@ async def _step_farm_financials(
             "dcl_url": f"{dcl_url}/api/dcl/ingest",
             "tenant_id": tenant_id or "",
             "snapshot_name": snapshot_name,
-            "entity_id": tenant_id or "",
+            "entity_id": entity_id,
         },
     }
 
@@ -739,6 +751,30 @@ async def run_pipeline_batch(job_id: str) -> None:
 
     async with httpx.AsyncClient(timeout=240.0) as client:
         context: dict[str, Any] = {}
+
+        # Resolve tenant identity from registry at pipeline start.
+        # The engagement's entity_ids are the business keys; tenant_id
+        # is the shared isolation UUID looked up from the registry.
+        cfg = job.config
+        _entity_id = cfg.get("entity_id")
+        if not _entity_id and cfg.get("entities"):
+            _entity_id = cfg["entities"][0]
+        if _entity_id:
+            _reg = await db.get_entity(_entity_id)
+            if _reg:
+                context["tenant_id"] = _reg["tenant_id"]
+                context["entity_id"] = _reg["entity_id"]
+                context["entity_name"] = _reg["entity_name"]
+        if "tenant_id" not in context:
+            # Fallback: use explicit tenant_id from config and look up entities
+            _tid = cfg.get("tenant_id") or config.AOS_DEV_TENANT_ID
+            if _tid:
+                context["tenant_id"] = _tid
+                _entities = await db.list_entities_for_tenant(_tid)
+                if _entities:
+                    context["entity_id"] = _entities[0]["entity_id"]
+                    context["entity_name"] = _entities[0]["entity_name"]
+
         i = 0
         while i < len(job.steps):
             step = job.steps[i]
@@ -810,6 +846,11 @@ async def run_pipeline_batch(job_id: str) -> None:
 def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
     """Rebuild pipeline context from completed step data."""
     context: dict[str, Any] = {}
+    # Carry identity from job config first (set at pipeline start from registry)
+    cfg = job.config
+    for key in ("tenant_id", "entity_id", "entity_name"):
+        if cfg.get(key):
+            context[key] = cfg[key]
     for s in job.steps:
         if s.data and s.status == StepStatus.SUCCESS:
             if "snapshot_id" in s.data:

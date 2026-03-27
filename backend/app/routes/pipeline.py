@@ -237,7 +237,7 @@ async def get_dcl_recon(job_id: str):
         )
 
     context = pipeline_orchestrator._extract_job_context(job)
-    entity_id = context.get("tenant_id")
+    entity_id = context.get("entity_id")
 
     params: dict[str, str] = {}
     if entity_id:

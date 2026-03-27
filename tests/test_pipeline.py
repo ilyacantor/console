@@ -64,6 +64,12 @@ def test_run_se_pipeline(mock_client_cls, mock_db):
     mock_client = _make_mock_client(mock_post, mock_get)
     mock_client_cls.return_value = mock_client
     mock_db.save_pipeline_job = AsyncMock()
+    mock_db.get_entity = AsyncMock(return_value={
+        "entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian",
+    })
+    mock_db.list_entities_for_tenant = AsyncMock(return_value=[
+        {"entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian"},
+    ])
 
     resp = client.post("/api/pipeline/run", json={
         "mode": "SE",
@@ -114,6 +120,12 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
     mock_client = _make_mock_client(mock_post, mock_get)
     mock_client_cls.return_value = mock_client
     mock_db.save_pipeline_job = AsyncMock()
+    mock_db.get_entity = AsyncMock(return_value={
+        "entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian",
+    })
+    mock_db.list_entities_for_tenant = AsyncMock(return_value=[
+        {"entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian"},
+    ])
 
     resp = client.post("/api/pipeline/run", json={
         "mode": "ME",
@@ -152,6 +164,12 @@ def test_pipeline_stops_on_failure(mock_client_cls, mock_db):
     mock_client = _make_mock_client(mock_post, mock_get)
     mock_client_cls.return_value = mock_client
     mock_db.save_pipeline_job = AsyncMock()
+    mock_db.get_entity = AsyncMock(return_value={
+        "entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian",
+    })
+    mock_db.list_entities_for_tenant = AsyncMock(return_value=[
+        {"entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian"},
+    ])
 
     resp = client.post("/api/pipeline/run", json={
         "mode": "SE",
@@ -177,6 +195,12 @@ def test_pipeline_farm_connection_error(mock_client_cls, mock_db):
     mock_client = _make_mock_client(mock_post, AsyncMock())
     mock_client_cls.return_value = mock_client
     mock_db.save_pipeline_job = AsyncMock()
+    mock_db.get_entity = AsyncMock(return_value={
+        "entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian",
+    })
+    mock_db.list_entities_for_tenant = AsyncMock(return_value=[
+        {"entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian"},
+    ])
 
     resp = client.post("/api/pipeline/run", json={
         "mode": "SE",
