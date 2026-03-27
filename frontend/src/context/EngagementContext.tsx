@@ -22,7 +22,7 @@ function pickDefault(list: Engagement[]): Engagement | null {
     if (match) return match
   }
   const ma = list.find((e) => e.engagement_type === 'MA')
-  return ma ?? list[0]
+  return ma ?? list[0]!
 }
 
 export function EngagementProvider({ children }: { children: ReactNode }) {

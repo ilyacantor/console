@@ -28,9 +28,9 @@ function StatusPill({ status }: { status: string }) {
     converted: { bg: '#DCFCE7', text: '#166534' },
     stubbed: { bg: '#FEF3C7', text: '#92400E' },
   }
-  const c = colors[status] || colors.pending
+  const c = colors[status] ?? colors.pending!
   return (
-    <span style={{ fontSize: '11px', fontWeight: 600, background: c.bg, color: c.text, borderRadius: '4px', padding: '2px 8px' }}>
+    <span style={{ fontSize: '11px', fontWeight: 600, background: c!.bg, color: c!.text, borderRadius: '4px', padding: '2px 8px' }}>
       {status}
     </span>
   )
@@ -165,7 +165,7 @@ export default function Upload() {
   const { activeEngagement } = useEngagement()
   const [acquirerFile, setAcquirerFile] = useState<PanelFile>({ upload: null, uploading: false, error: null })
   const [targetFile, setTargetFile] = useState<PanelFile>({ upload: null, uploading: false, error: null })
-  const [intakeStep, setIntakeStep] = useState(-1)
+  const [_intakeStep, setIntakeStep] = useState(-1)
   const [intakeStatuses, setIntakeStatuses] = useState<string[]>(INTAKE_STEPS.map(() => 'pending'))
   const [intakeDurations, setIntakeDurations] = useState<(number | null)[]>(INTAKE_STEPS.map(() => null))
   const [proceeding, setProceeding] = useState(false)
@@ -232,7 +232,7 @@ export default function Upload() {
       const t3 = Date.now()
       const acqResult = await proceedUpload(acquirerFile.upload.upload_id)
       const tgtResult = await proceedUpload(targetFile.upload.upload_id)
-      const isStubbed = acqResult.conversion?.note?.includes('Stub') || tgtResult.conversion?.note?.includes('Stub')
+      const isStubbed = (acqResult.conversion as { note?: string })?.note?.includes('Stub') || (tgtResult.conversion as { note?: string })?.note?.includes('Stub')
       markStep(3, isStubbed ? 'stubbed' : 'success', (Date.now() - t3) / 1000)
 
       // Steps 4-5: Push to PG + Trigger COFA chain — not yet implemented

@@ -18,9 +18,9 @@ const SEVERITY_COLORS: Record<string, { bg: string; text: string }> = {
 }
 
 function SeverityPill({ severity }: { severity: string }) {
-  const c = SEVERITY_COLORS[severity] || SEVERITY_COLORS.low
+  const c = SEVERITY_COLORS[severity] ?? SEVERITY_COLORS.low!
   return (
-    <span style={{ fontSize: '11px', fontWeight: 600, background: c.bg, color: c.text, borderRadius: '4px', padding: '2px 8px' }}>
+    <span style={{ fontSize: '11px', fontWeight: 600, background: c!.bg, color: c!.text, borderRadius: '4px', padding: '2px 8px' }}>
       {severity}
     </span>
   )

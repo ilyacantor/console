@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 interface PolicyDoc {
   entity: string
@@ -44,12 +44,6 @@ const POLICIES: PolicyDoc[] = [
 
 export default function Constitution() {
   const [activeLayer, setActiveLayer] = useState<number | null>(null)
-  const [status, setStatus] = useState<string>('loaded')
-
-  useEffect(() => {
-    // Constitution files live in Platform — status indicates they're available
-    setStatus('loaded')
-  }, [])
 
   return (
     <div style={{ padding: '24px', maxWidth: '960px' }}>

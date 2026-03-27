@@ -64,6 +64,7 @@ export interface PipelineJobData {
   message: string
   config: Record<string, unknown>
   created_at?: string
+  entity_ids?: string[]
 }
 
 interface StartPipelineResponse {

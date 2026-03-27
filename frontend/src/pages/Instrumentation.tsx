@@ -61,7 +61,7 @@ export default function Instrumentation() {
     else { setSortKey(key); setSortAsc(true) }
   }
 
-  const headerStyle = (key: SortKey): React.CSSProperties => ({
+  const headerStyle = (_key: SortKey): React.CSSProperties => ({
     padding: '6px 8px', fontSize: '11px', fontWeight: 600, textAlign: 'left',
     color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none',
     borderBottom: '1px solid var(--border)',

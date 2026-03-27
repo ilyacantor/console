@@ -8,9 +8,9 @@ function TypePill({ type }: { type: string }) {
     ME: { bg: '#E0E7FF', text: '#3730A3' },
     MA: { bg: '#FCE7F3', text: '#9D174D' },
   }
-  const c = colors[type] || colors.SE
+  const c = colors[type] ?? colors.SE!
   return (
-    <span style={{ fontSize: '11px', fontWeight: 600, background: c.bg, color: c.text, borderRadius: '4px', padding: '2px 8px' }}>
+    <span style={{ fontSize: '11px', fontWeight: 600, background: c!.bg, color: c!.text, borderRadius: '4px', padding: '2px 8px' }}>
       {type === 'MA' ? 'M&A' : type}
     </span>
   )
@@ -25,9 +25,9 @@ function StagePill({ stage }: { stage: string }) {
     deliver: { bg: '#DCFCE7', text: '#166534' },
     closed: { bg: '#E5E7EB', text: '#374151' },
   }
-  const c = colors[stage] || colors.upload
+  const c = colors[stage] ?? colors.upload!
   return (
-    <span style={{ fontSize: '11px', fontWeight: 600, background: c.bg, color: c.text, borderRadius: '4px', padding: '2px 8px' }}>
+    <span style={{ fontSize: '11px', fontWeight: 600, background: c!.bg, color: c!.text, borderRadius: '4px', padding: '2px 8px' }}>
       {stage}
     </span>
   )
@@ -71,7 +71,7 @@ export default function Engagements() {
     fetchRuns(50)
       .then(({ runs }) => {
         for (const r of runs) {
-          for (const eid of r.entity_ids) names.add(eid)
+          for (const eid of r.entity_ids ?? []) names.add(eid)
         }
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load pipeline runs'))

@@ -168,7 +168,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
   // -------------------------------------------------------------------
   // Polling — only when panel is open
   // -------------------------------------------------------------------
-  const { data: maestraStatus } = usePolledData<MaestraStatusResponse>(
+  const { data: _maestraStatus } = usePolledData<MaestraStatusResponse>(
     async () => {
       const res = await fetch('/api/proxy/platform/api/maestra/status');
       if (!res.ok) throw new Error(`Status fetch failed: ${res.status}`);

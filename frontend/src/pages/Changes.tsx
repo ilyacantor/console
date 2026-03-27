@@ -84,7 +84,7 @@ export default function Changes() {
       const params: Record<string, string | number> = {}
       if (severityFilter) params.severity = severityFilter
       const moduleArr = Array.from(moduleFilters)
-      if (moduleArr.length === 1) params.module = moduleArr[0]
+      if (moduleArr.length === 1) params.module = moduleArr[0]!
 
       const [evResp, sumResp] = await Promise.all([
         fetchChanges(params),
@@ -137,7 +137,7 @@ export default function Changes() {
       currentDate = d
       grouped.push({ date: d, items: [] })
     }
-    grouped[grouped.length - 1].items.push(ev)
+    grouped[grouped.length - 1]!.items.push(ev)
   }
 
   let sinceText = '24h ago'

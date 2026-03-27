@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchNarrative, updateNarrative, type NarrativeStep, type Narrative } from '../api/client'
+import { fetchNarrative, updateNarrative, type NarrativeStep } from '../api/client'
 
 function StepCard({
   step,
@@ -63,7 +63,7 @@ function StepCard({
                 value={msg.text}
                 onChange={(e) => {
                   const msgs = [...step.messages]
-                  msgs[mi] = { ...msgs[mi], text: e.target.value }
+                  msgs[mi] = { ...msgs[mi]!, text: e.target.value }
                   onChange({ ...step, messages: msgs })
                 }}
                 rows={2}
@@ -74,7 +74,7 @@ function StepCard({
                 value={msg.delay_ms}
                 onChange={(e) => {
                   const msgs = [...step.messages]
-                  msgs[mi] = { ...msgs[mi], delay_ms: Number(e.target.value) }
+                  msgs[mi] = { ...msgs[mi]!, delay_ms: Number(e.target.value) }
                   onChange({ ...step, messages: msgs })
                 }}
                 style={{ width: '70px', padding: '4px 6px', fontSize: '12px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--bg)', color: 'var(--text-primary)' }}
@@ -169,7 +169,7 @@ export default function NarrativeEditor() {
   const moveStep = (from: number, to: number) => {
     const next = [...steps]
     const [removed] = next.splice(from, 1)
-    next.splice(to, 0, removed)
+    next.splice(to, 0, removed!)
     setSteps(next)
     setExpanded(to)
   }
