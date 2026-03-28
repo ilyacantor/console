@@ -22,6 +22,7 @@ import {
   type PipelineJobData,
 } from '../api/client'
 import { useHealth } from '../context/HealthContext'
+import { useEngagement } from '../context/EngagementContext'
 
 // ── Status helpers ──────────────────────────────────────────────────
 
@@ -444,8 +445,10 @@ function StepDetail({ step }: { step: PipelineStepData }) {
 
 export default function Pipeline() {
   const { health } = useHealth()
+  const { activeEngagement } = useEngagement()
   const [selectedMode, setSelectedMode] = useState<'se' | 'me'>('se')
   const [executionMode, setExecutionMode] = useState<'batch' | 'step'>('batch')
+  const [selectedEntity, setSelectedEntity] = useState<'acquirer' | 'target'>('acquirer')
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [jobData, setJobData] = useState<PipelineJobData | null>(null)
   const [runs, setRuns] = useState<PipelineJobData[]>([])
@@ -539,7 +542,14 @@ export default function Pipeline() {
     setSelectedStepName(null)
     setStarting(true)
     try {
-      const result = await startPipeline(selectedMode, executionMode)
+      const config: Record<string, unknown> = {}
+      if (activeEngagement) {
+        config.engagement_id = activeEngagement.engagement_id
+        config.entity_id = selectedEntity === 'acquirer'
+          ? activeEngagement.acquirer_entity_id
+          : activeEngagement.target_entity_id
+      }
+      const result = await startPipeline(selectedMode, executionMode, config)
       setActiveJobId(result.job_id)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -626,6 +636,36 @@ export default function Pipeline() {
               </button>
             ))}
           </div>
+
+          {/* Entity selector (SE mode) */}
+          {selectedMode === 'se' && activeEngagement && (
+            <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '0.5px solid var(--border)' }}>
+              {(['acquirer', 'target'] as const).map((side) => {
+                const eid = side === 'acquirer'
+                  ? activeEngagement.acquirer_entity_id
+                  : activeEngagement.target_entity_id
+                return (
+                  <button
+                    key={side}
+                    onClick={() => setSelectedEntity(side)}
+                    disabled={!!isRunning}
+                    style={{
+                      padding: '5px 10px',
+                      fontSize: '11px',
+                      background: selectedEntity === side ? '#374151' : 'var(--bg-card)',
+                      color: selectedEntity === side ? '#fff' : 'var(--text-secondary)',
+                      border: 'none',
+                      cursor: isRunning ? 'not-allowed' : 'pointer',
+                      opacity: isRunning ? 0.5 : 1,
+                    }}
+                    title={eid}
+                  >
+                    {eid}
+                  </button>
+                )
+              })}
+            </div>
+          )}
 
           {/* Run */}
           <button

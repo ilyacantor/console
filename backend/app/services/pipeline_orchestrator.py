@@ -755,13 +755,21 @@ async def run_pipeline_batch(job_id: str) -> None:
         context: dict[str, Any] = {}
 
         # Resolve tenant identity from pipeline config at start.
-        # entity_id and entity_name come from the engagement record
-        # (set at engagement creation time). tenant_id from config or env.
+        # Frontend sends engagement_id + entity_id (acquirer or target).
+        # tenant_id comes from the engagement record or env var fallback.
         cfg = job.config
         _entity_id = cfg.get("entity_id")
         if not _entity_id and cfg.get("entities"):
             _entity_id = cfg["entities"][0]
-        context["tenant_id"] = cfg.get("tenant_id") or config.AOS_TENANT_ID
+
+        # Look up engagement for tenant_id if engagement_id provided
+        _engagement_id = cfg.get("engagement_id")
+        if _engagement_id:
+            _eng = await db.get_engagement(_engagement_id)
+            if _eng and _eng.get("tenant_id"):
+                context["tenant_id"] = _eng["tenant_id"]
+        if "tenant_id" not in context:
+            context["tenant_id"] = cfg.get("tenant_id") or config.AOS_TENANT_ID
         if _entity_id:
             context["entity_id"] = _entity_id
         if cfg.get("entity_name"):
