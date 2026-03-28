@@ -191,7 +191,7 @@ async def _step_farm_snapshot(
     """SE Step 1: Create Farm snapshot."""
     url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL, "Farm Snapshot")
     cfg = job.config
-    tenant_id = context.get("tenant_id") or cfg.get("tenant_id") or config.AOS_DEV_TENANT_ID
+    tenant_id = context.get("tenant_id") or cfg.get("tenant_id") or config.AOS_TENANT_ID
     entity_id = context.get("entity_id") or cfg.get("entity_id")
     entity_name = context.get("entity_name")
 
@@ -461,7 +461,7 @@ async def _step_farm_financials(
     tenant_id = (context.get("tenant_id")
                  or farm_cfg.get("tenant_id")
                  or cfg.get("tenant_id")
-                 or config.AOS_DEV_TENANT_ID)
+                 or config.AOS_TENANT_ID)
     entity_id = (farm_cfg.get("entity_id")
                  or context.get("entity_id")
                  or cfg.get("entity_id"))
@@ -767,7 +767,7 @@ async def run_pipeline_batch(job_id: str) -> None:
                 context["entity_name"] = _reg["entity_name"]
         if "tenant_id" not in context:
             # Fallback: use explicit tenant_id from config and look up entities
-            _tid = cfg.get("tenant_id") or config.AOS_DEV_TENANT_ID
+            _tid = cfg.get("tenant_id") or config.AOS_TENANT_ID
             if _tid:
                 context["tenant_id"] = _tid
                 _entities = await db.list_entities_for_tenant(_tid)

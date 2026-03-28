@@ -351,7 +351,7 @@ async def _seed_engagements() -> None:
         "total_tokens": 0,
     }
 
-    tenant_id = config.AOS_DEV_TENANT_ID or None
+    tenant_id = config.AOS_TENANT_ID or None
 
     async with _pool.acquire() as conn:
         await conn.execute(

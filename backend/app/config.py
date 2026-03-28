@@ -21,7 +21,7 @@ PLATFORM_BASE_URL: str = os.environ.get("PLATFORM_BASE_URL", "http://localhost:8
 AOD_API_KEY: str = os.environ.get("AOD_API_KEY", "")
 
 # Tenant
-AOS_DEV_TENANT_ID: str = os.environ.get("AOS_TENANT_ID") or os.environ.get("AOS_DEV_TENANT_ID", "")
+AOS_TENANT_ID: str = os.environ.get("AOS_TENANT_ID") or os.environ.get("AOS_DEV_TENANT_ID", "")
 
 # CORS
 CORS_ORIGINS: list[str] = [
