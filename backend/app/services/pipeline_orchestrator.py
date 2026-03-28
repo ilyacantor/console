@@ -226,8 +226,14 @@ async def _step_farm_snapshot(
     if resp.status_code == 200:
         data = resp.json()
         context["snapshot_id"] = data.get("snapshot_id")
-        # Provenance uses entity_name from registry (stable across runs)
-        provenance = entity_name or entity_id or data.get("tenant_id")
+        # SE mode: Farm generates entity_id — read it back into context
+        if data.get("entity_id") and "entity_id" not in context:
+            context["entity_id"] = data["entity_id"]
+        if data.get("tenant_name") and "entity_name" not in context:
+            context["entity_name"] = data["tenant_name"]
+        provenance = (context.get("entity_name")
+                      or context.get("entity_id")
+                      or data.get("tenant_id"))
         if provenance:
             context["provenance_tag"] = provenance
             for s in job.steps:
@@ -754,26 +760,34 @@ async def run_pipeline_batch(job_id: str) -> None:
     async with httpx.AsyncClient(timeout=240.0) as client:
         context: dict[str, Any] = {}
 
-        # Resolve tenant identity from pipeline config at start.
-        # Frontend sends engagement_id + entity_id (acquirer or target).
-        # tenant_id comes from the engagement record or env var fallback.
+        # Resolve tenant identity — SE and ME have different models.
         cfg = job.config
-        _entity_id = cfg.get("entity_id")
-        if not _entity_id and cfg.get("entities"):
-            _entity_id = cfg["entities"][0]
-
-        # Look up engagement for tenant_id if engagement_id provided
         _engagement_id = cfg.get("engagement_id")
-        if _engagement_id:
-            _eng = await db.get_engagement(_engagement_id)
-            if _eng and _eng.get("tenant_id"):
-                context["tenant_id"] = _eng["tenant_id"]
-        if "tenant_id" not in context:
-            context["tenant_id"] = cfg.get("tenant_id") or config.AOS_TENANT_ID
-        if _entity_id:
-            context["entity_id"] = _entity_id
-        if cfg.get("entity_name"):
-            context["entity_name"] = cfg["entity_name"]
+
+        if job.pipeline_mode == "se":
+            # SE: tenant_id from engagement or env.  entity_id is NOT set
+            # here — Farm generates it deterministically from tenant_id.
+            if _engagement_id:
+                _eng = await db.get_engagement(_engagement_id)
+                if _eng and _eng.get("tenant_id"):
+                    context["tenant_id"] = _eng["tenant_id"]
+            if "tenant_id" not in context:
+                context["tenant_id"] = cfg.get("tenant_id") or config.AOS_TENANT_ID
+        else:
+            # ME: entity_id comes from engagement record (meridian/cascadia).
+            _entity_id = cfg.get("entity_id")
+            if not _entity_id and cfg.get("entities"):
+                _entity_id = cfg["entities"][0]
+            if _engagement_id:
+                _eng = await db.get_engagement(_engagement_id)
+                if _eng and _eng.get("tenant_id"):
+                    context["tenant_id"] = _eng["tenant_id"]
+            if "tenant_id" not in context:
+                context["tenant_id"] = cfg.get("tenant_id") or config.AOS_TENANT_ID
+            if _entity_id:
+                context["entity_id"] = _entity_id
+            if cfg.get("entity_name"):
+                context["entity_name"] = cfg["entity_name"]
 
         i = 0
         while i < len(job.steps):

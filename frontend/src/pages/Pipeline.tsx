@@ -543,7 +543,7 @@ export default function Pipeline() {
     setStarting(true)
     try {
       const config: Record<string, unknown> = {}
-      if (activeEngagement) {
+      if (selectedMode === 'me' && activeEngagement) {
         config.engagement_id = activeEngagement.engagement_id
         config.entity_id = selectedEntity === 'acquirer'
           ? activeEngagement.acquirer_entity_id
@@ -637,8 +637,8 @@ export default function Pipeline() {
             ))}
           </div>
 
-          {/* Entity selector (SE mode) */}
-          {selectedMode === 'se' && activeEngagement && (
+          {/* Entity selector (ME mode — acquirer/target from engagement) */}
+          {selectedMode === 'me' && activeEngagement && (
             <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '0.5px solid var(--border)' }}>
               {(['acquirer', 'target'] as const).map((side) => {
                 const eid = side === 'acquirer'
