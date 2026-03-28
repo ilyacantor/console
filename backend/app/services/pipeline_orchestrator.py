@@ -203,6 +203,8 @@ async def _step_farm_snapshot(
         body["tenant_id"] = tenant_id
     if entity_id:
         body["entity_id"] = entity_id
+    if entity_name:
+        body["entity_name"] = entity_name
     if cfg.get("enterprise_profile"):
         body["enterprise_profile"] = cfg["enterprise_profile"]
 
@@ -752,28 +754,18 @@ async def run_pipeline_batch(job_id: str) -> None:
     async with httpx.AsyncClient(timeout=240.0) as client:
         context: dict[str, Any] = {}
 
-        # Resolve tenant identity from registry at pipeline start.
-        # The engagement's entity_ids are the business keys; tenant_id
-        # is the shared isolation UUID looked up from the registry.
+        # Resolve tenant identity from pipeline config at start.
+        # entity_id and entity_name come from the engagement record
+        # (set at engagement creation time). tenant_id from config or env.
         cfg = job.config
         _entity_id = cfg.get("entity_id")
         if not _entity_id and cfg.get("entities"):
             _entity_id = cfg["entities"][0]
+        context["tenant_id"] = cfg.get("tenant_id") or config.AOS_TENANT_ID
         if _entity_id:
-            _reg = await db.get_entity(_entity_id)
-            if _reg:
-                context["tenant_id"] = _reg["tenant_id"]
-                context["entity_id"] = _reg["entity_id"]
-                context["entity_name"] = _reg["entity_name"]
-        if "tenant_id" not in context:
-            # Fallback: use explicit tenant_id from config and look up entities
-            _tid = cfg.get("tenant_id") or config.AOS_TENANT_ID
-            if _tid:
-                context["tenant_id"] = _tid
-                _entities = await db.list_entities_for_tenant(_tid)
-                if _entities:
-                    context["entity_id"] = _entities[0]["entity_id"]
-                    context["entity_name"] = _entities[0]["entity_name"]
+            context["entity_id"] = _entity_id
+        if cfg.get("entity_name"):
+            context["entity_name"] = cfg["entity_name"]
 
         i = 0
         while i < len(job.steps):
