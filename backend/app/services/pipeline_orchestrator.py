@@ -188,24 +188,17 @@ async def _step_farm_snapshot(
     context: dict[str, Any],
     t0: float,
 ) -> None:
-    """SE Step 1: Create Farm snapshot."""
+    """SE Step 1: Create Farm snapshot.  Farm owns identity generation —
+    Console sends no tenant_id, entity_id, or seed.  Farm returns a fresh
+    entity_id each run which Console carries forward through the pipeline."""
     url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL, "Farm Snapshot")
     cfg = job.config
-    tenant_id = context.get("tenant_id") or cfg.get("tenant_id") or config.AOS_TENANT_ID
-    entity_id = context.get("entity_id") or cfg.get("entity_id")
-    entity_name = context.get("entity_name")
 
     body: dict[str, Any] = {
         "scale": cfg.get("scale", "medium"),
     }
     if cfg.get("seed") is not None:
         body["seed"] = cfg["seed"]
-    if tenant_id:
-        body["tenant_id"] = tenant_id
-    if entity_id:
-        body["entity_id"] = entity_id
-    if entity_name:
-        body["entity_name"] = entity_name
     if cfg.get("enterprise_profile"):
         body["enterprise_profile"] = cfg["enterprise_profile"]
 
@@ -269,7 +262,13 @@ async def _step_farm_snapshot(
                     result = poll_data.get("result", {})
                     context["snapshot_id"] = (result.get("snapshot_id")
                                               or data.get("snapshot_id"))
-                    provenance = entity_name or entity_id or result.get("tenant_id")
+                    if result.get("entity_id") and "entity_id" not in context:
+                        context["entity_id"] = result["entity_id"]
+                    if result.get("tenant_name") and "entity_name" not in context:
+                        context["entity_name"] = result["tenant_name"]
+                    provenance = (context.get("entity_name")
+                                  or context.get("entity_id")
+                                  or result.get("tenant_id"))
                     if provenance:
                         context["provenance_tag"] = provenance
                         for s in job.steps:
@@ -767,14 +766,9 @@ async def run_pipeline_batch(job_id: str) -> None:
         _engagement_id = cfg.get("engagement_id")
 
         if job.pipeline_mode == "se":
-            # SE: tenant_id from engagement or env.  entity_id is NOT set
-            # here — Farm generates it deterministically from tenant_id.
-            if _engagement_id:
-                _eng = await db.get_engagement(_engagement_id)
-                if _eng and _eng.get("tenant_id"):
-                    context["tenant_id"] = _eng["tenant_id"]
-            if "tenant_id" not in context:
-                context["tenant_id"] = cfg.get("tenant_id") or config.AOS_TENANT_ID
+            # SE: Farm generates fresh identity (entity_id) each run.
+            # AOS_TENANT_ID enters the pipeline at the DCL write boundary only.
+            pass
         else:
             # ME: entity_id comes from engagement record (meridian/cascadia).
             _entity_id = cfg.get("entity_id")
@@ -873,6 +867,8 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
                 context["snapshot_id"] = s.data["snapshot_id"]
             if "tenant_id" in s.data:
                 context["tenant_id"] = s.data["tenant_id"]
+            if "entity_id" in s.data:
+                context["entity_id"] = s.data["entity_id"]
             if "run_id" in s.data:
                 context["run_id"] = s.data["run_id"]
         if s.provenance_tag:
