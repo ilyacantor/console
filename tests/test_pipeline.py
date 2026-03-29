@@ -44,7 +44,8 @@ def test_run_se_pipeline(mock_client_cls, mock_db):
     async def mock_post(url, **kwargs):
         if "/api/snapshots" in url:
             return httpx.Response(200, json={
-                "snapshot_id": "snap-123", "tenant_id": "meridian"
+                "snapshot_id": "snap-123", "tenant_id": "meridian",
+                "entity_id": "meridian",
             })
         if "/api/runs/from-farm" in url:
             return httpx.Response(200, json={
@@ -146,6 +147,60 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
 
     for step in data["steps"]:
         assert step["status"] == "success"
+
+
+@patch("backend.app.services.pipeline_orchestrator.db")
+@patch("backend.app.services.pipeline_orchestrator.httpx.AsyncClient")
+def test_me_pipeline_ignores_console_uuid(mock_client_cls, mock_db):
+    """Console UUID engagement_id in config must not be sent to Platform COFA."""
+
+    cofa_bodies = []
+
+    async def mock_post(url, **kwargs):
+        if "/api/farm/manifest-intake" in url:
+            return _farm_manifest_response()
+        if "/api/maestra/cofa-chat" in url:
+            cofa_bodies.append(kwargs.get("json", {}))
+            return httpx.Response(200, json={"response": "COFA complete"})
+        return httpx.Response(404, json={"detail": "not found"})
+
+    async def mock_get(url, **kwargs):
+        if "/api/dcl/triples/overview" in url:
+            return _dcl_overview_response()
+        if "/api/maestra/engagements" in url:
+            return httpx.Response(200, json={
+                "engagements": [{"engagement_id": "sweep3-abc123", "state": "active"}]
+            })
+        return httpx.Response(404, json={"detail": "not found"})
+
+    mock_client = _make_mock_client(mock_post, mock_get)
+    mock_client_cls.return_value = mock_client
+    mock_db.save_pipeline_job = AsyncMock()
+    mock_db.get_entity = AsyncMock(return_value={
+        "entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian",
+    })
+    mock_db.get_engagement = AsyncMock(return_value={
+        "engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "tenant_id": "test-tenant",
+    })
+    mock_db.list_entities_for_tenant = AsyncMock(return_value=[
+        {"entity_id": "meridian", "tenant_id": "test-tenant", "entity_name": "Meridian"},
+    ])
+
+    resp = client.post("/api/pipeline/run", json={
+        "mode": "ME",
+        "entities": ["meridian", "cascadia"],
+        "config": {"engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["steps"][3]["name"] == "cofa_unification"
+    assert data["steps"][3]["status"] == "success"
+
+    # COFA call must use the Platform engagement ID, not the Console UUID
+    assert len(cofa_bodies) == 1
+    assert cofa_bodies[0]["engagement_id"] == "sweep3-abc123"
 
 
 @patch("backend.app.services.pipeline_orchestrator.db")

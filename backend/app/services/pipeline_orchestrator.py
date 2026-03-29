@@ -608,9 +608,10 @@ async def _step_cofa_unification(
                                 "COFA Unification")
 
     cfg = job.config
-    engagement_id = cfg.get("engagement_id")
-
-    # Auto-fetch active engagement if not provided
+    # Console's config.engagement_id is a Console-side UUID (from console.engagements).
+    # Platform uses its own engagement IDs (stored in engagement_state).
+    # Always resolve from Platform's API so we get the correct ID.
+    engagement_id = None
     if not engagement_id:
         engagements_url = f"{platform_url}/api/maestra/engagements"
         try:
