@@ -196,9 +196,10 @@ async def _step_farm_snapshot(
     entity_name = context.get("entity_name")
 
     body: dict[str, Any] = {
-        "seed": cfg.get("seed", 42),
         "scale": cfg.get("scale", "medium"),
     }
+    if cfg.get("seed") is not None:
+        body["seed"] = cfg["seed"]
     if tenant_id:
         body["tenant_id"] = tenant_id
     if entity_id:
