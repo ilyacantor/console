@@ -18,8 +18,10 @@ import {
   fetchPipelineStatus,
   advancePipeline,
   fetchRuns,
+  fetchConvergenceEngagements,
   type PipelineStepData,
   type PipelineJobData,
+  type ConvergenceEngagement,
 } from '../api/client'
 import { useHealth } from '../context/HealthContext'
 import { useEngagement } from '../context/EngagementContext'
@@ -341,8 +343,15 @@ function FarmPushSummary({ steps }: { steps: PipelineStepData[] }) {
   const rowsGenerated = data.rows_generated ?? null
   const push = (data.push_result ?? {}) as Record<string, any>
   const rowsAccepted = push.rows_accepted ?? null
+  const triplesWritten = push.triples_written ?? rowsAccepted
+  const sourceRows = data.source_rows ?? rowsGenerated
   const tTotal = data.t_total_ms ?? farmStep.duration_ms
   const tPush = data.t_push_ms ?? null
+
+  // Compute expansion factor
+  const expansionFactor = sourceRows && sourceRows > 0 && triplesWritten
+    ? (triplesWritten / sourceRows).toFixed(1)
+    : null
 
   return (
     <div
@@ -393,6 +402,14 @@ function FarmPushSummary({ steps }: { steps: PipelineStepData[] }) {
           <span>—</span>
         )}
       </div>
+      {expansionFactor && (
+        <div data-testid="expansion-summary">
+          <span style={{ color: '#6B7280', marginRight: '6px' }}>Expansion</span>
+          <span style={{ color: '#4ADE80' }}>
+            {sourceRows?.toLocaleString()} rows → {triplesWritten?.toLocaleString()} triples ({expansionFactor}x)
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -448,8 +465,7 @@ export default function Pipeline() {
   const { activeEngagement } = useEngagement()
   const [selectedMode, setSelectedMode] = useState<'se' | 'me'>('se')
   const [executionMode, setExecutionMode] = useState<'batch' | 'step'>('batch')
-  const [selectedEntity, setSelectedEntity] = useState<'acquirer' | 'target'>('acquirer')
-  const [activeJobId, setActiveJobId] = useState<string | null>(null)
+  const [activePipelineRunId, setActivePipelineRunId] = useState<string | null>(null)
   const [jobData, setJobData] = useState<PipelineJobData | null>(null)
   const [runs, setRuns] = useState<PipelineJobData[]>([])
   const [starting, setStarting] = useState(false)
@@ -458,6 +474,35 @@ export default function Pipeline() {
   const [selectedStepName, setSelectedStepName] = useState<string | null>(null)
   const [expandedRun, setExpandedRun] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Convergence engagements for ME mode dropdown
+  const [convergenceEngagements, setConvergenceEngagements] = useState<ConvergenceEngagement[]>([])
+  const [selectedConvergenceEngagement, setSelectedConvergenceEngagement] = useState<ConvergenceEngagement | null>(null)
+  const [loadingConvergenceEngagements, setLoadingConvergenceEngagements] = useState(false)
+
+  // Load Convergence engagements when ME mode selected
+  useEffect(() => {
+    if (selectedMode !== 'me') return
+    setLoadingConvergenceEngagements(true)
+    fetchConvergenceEngagements()
+      .then(({ engagements }) => {
+        // Most recent first (already sorted by API, but ensure)
+        const sorted = [...engagements].sort((a, b) => {
+          if (!a.created_at) return 1
+          if (!b.created_at) return -1
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        })
+        setConvergenceEngagements(sorted)
+        if (sorted.length > 0 && !selectedConvergenceEngagement) {
+          setSelectedConvergenceEngagement(sorted[0]!)
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load Convergence engagements:', err)
+        setConvergenceEngagements([])
+      })
+      .finally(() => setLoadingConvergenceEngagements(false))
+  }, [selectedMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load run history
   const loadRuns = useCallback(async () => {
@@ -478,11 +523,11 @@ export default function Pipeline() {
       pollRef.current = null
     }
 
-    if (!activeJobId) return
+    if (!activePipelineRunId) return
 
     const poll = async () => {
       try {
-        const data = await fetchPipelineStatus(activeJobId)
+        const data = await fetchPipelineStatus(activePipelineRunId)
         setJobData(data)
         if (isTerminal(data.status)) {
           if (pollRef.current) {
@@ -505,7 +550,7 @@ export default function Pipeline() {
         pollRef.current = null
       }
     }
-  }, [activeJobId, loadRuns])
+  }, [activePipelineRunId, loadRuns])
 
   // Auto-select interesting step
   useEffect(() => {
@@ -522,7 +567,7 @@ export default function Pipeline() {
     }
   }, [jobData])
 
-  const hasActiveJob = !!activeJobId
+  const hasActiveJob = !!activePipelineRunId
   const jobTerminal = jobData ? isTerminal(jobData.status) : false
   const isStepMode = executionMode === 'step'
   const isRunning = hasActiveJob && !jobTerminal && jobData?.steps?.some((s) => s.status === 'running')
@@ -536,21 +581,25 @@ export default function Pipeline() {
   })()
 
   const handleStart = async () => {
-    setActiveJobId(null)
+    setActivePipelineRunId(null)
     setJobData(null)
     setError(null)
     setSelectedStepName(null)
     setStarting(true)
     try {
       const config: Record<string, unknown> = {}
-      if (selectedMode === 'me' && activeEngagement) {
-        config.engagement_id = activeEngagement.engagement_id
-        config.entity_id = selectedEntity === 'acquirer'
-          ? activeEngagement.acquirer_entity_id
-          : activeEngagement.target_entity_id
+      if (selectedMode === 'me') {
+        // ME: pass Convergence engagement identity — both entities run
+        if (selectedConvergenceEngagement) {
+          config.convergence_engagement_id = selectedConvergenceEngagement.engagement_id
+        }
+        // Also pass Console engagement_id for DB linkage
+        if (activeEngagement) {
+          config.engagement_id = activeEngagement.engagement_id
+        }
       }
       const result = await startPipeline(selectedMode, executionMode, config)
-      setActiveJobId(result.job_id)
+      setActivePipelineRunId(result.pipeline_run_id)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -559,11 +608,11 @@ export default function Pipeline() {
   }
 
   const handleAdvance = async () => {
-    if (!activeJobId) return
+    if (!activePipelineRunId) return
     setError(null)
     setAdvancing(true)
     try {
-      await advancePipeline(activeJobId)
+      await advancePipeline(activePipelineRunId)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -572,7 +621,7 @@ export default function Pipeline() {
   }
 
   const handleReset = () => {
-    setActiveJobId(null)
+    setActivePipelineRunId(null)
     setJobData(null)
     setError(null)
     setSelectedStepName(null)
@@ -637,33 +686,42 @@ export default function Pipeline() {
             ))}
           </div>
 
-          {/* Entity selector (ME mode — acquirer/target from engagement) */}
-          {selectedMode === 'me' && activeEngagement && (
-            <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '0.5px solid var(--border)' }}>
-              {(['acquirer', 'target'] as const).map((side) => {
-                const eid = side === 'acquirer'
-                  ? activeEngagement.acquirer_entity_id
-                  : activeEngagement.target_entity_id
-                return (
-                  <button
-                    key={side}
-                    onClick={() => setSelectedEntity(side)}
-                    disabled={!!isRunning}
-                    style={{
-                      padding: '5px 10px',
-                      fontSize: '11px',
-                      background: selectedEntity === side ? '#374151' : 'var(--bg-card)',
-                      color: selectedEntity === side ? '#fff' : 'var(--text-secondary)',
-                      border: 'none',
-                      cursor: isRunning ? 'not-allowed' : 'pointer',
-                      opacity: isRunning ? 0.5 : 1,
-                    }}
-                    title={eid}
-                  >
-                    {eid}
-                  </button>
-                )
-              })}
+          {/* Engagement selector (ME mode — from Convergence API) */}
+          {selectedMode === 'me' && (
+            <div style={{ position: 'relative' }}>
+              <select
+                data-testid="me-engagement-dropdown"
+                value={selectedConvergenceEngagement?.engagement_id ?? ''}
+                onChange={(e) => {
+                  const eng = convergenceEngagements.find(
+                    (c) => c.engagement_id === e.target.value)
+                  if (eng) setSelectedConvergenceEngagement(eng)
+                }}
+                disabled={!!isRunning || loadingConvergenceEngagements}
+                style={{
+                  padding: '5px 10px',
+                  fontSize: '11px',
+                  borderRadius: '8px',
+                  border: '0.5px solid var(--border)',
+                  background: 'var(--bg-card)',
+                  color: '#fff',
+                  cursor: isRunning ? 'not-allowed' : 'pointer',
+                  opacity: isRunning ? 0.5 : 1,
+                  minWidth: '160px',
+                }}
+              >
+                {loadingConvergenceEngagements && (
+                  <option value="">Loading engagements...</option>
+                )}
+                {!loadingConvergenceEngagements && convergenceEngagements.length === 0 && (
+                  <option value="">No engagements found</option>
+                )}
+                {convergenceEngagements.map((eng) => (
+                  <option key={eng.engagement_id} value={eng.engagement_id}>
+                    {eng.short_name || `${eng.acquirer_entity_id} + ${eng.target_entity_id}`}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
@@ -823,7 +881,19 @@ export default function Pipeline() {
 
           {/* Footer */}
           <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px', color: '#6B7280' }}>
-            <span>Job: {jobData.job_id}</span>
+            <span data-testid="run-name-label" style={{ color: '#93C5FD', fontWeight: 500 }}>{jobData.run_name}</span>
+            {jobData.pipeline_mode === 'me' && jobData.config?.engagement_short_name && (
+              <>
+                <span>|</span>
+                <span data-testid="engagement-label">Engagement: {String(jobData.config.engagement_short_name)}</span>
+              </>
+            )}
+            {jobData.pipeline_mode === 'se' && jobData.config?.entity_id && (
+              <>
+                <span>|</span>
+                <span data-testid="entity-id-label">Entity: {String(jobData.config.entity_id)}</span>
+              </>
+            )}
             <span>|</span>
             <span>Started: {new Date(jobData.started_at).toLocaleTimeString()}</span>
             {jobData.completed_at && (
@@ -876,7 +946,7 @@ export default function Pipeline() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th style={{ ...thStyle, textAlign: 'left' }}>Job ID</th>
+                <th style={{ ...thStyle, textAlign: 'left' }}>Run</th>
                 <th style={thStyle}>Mode</th>
                 <th style={thStyle}>Execution</th>
                 <th style={thStyle}>Status</th>
@@ -887,10 +957,10 @@ export default function Pipeline() {
             <tbody>
               {runs.map((run) => (
                 <RunRow
-                  key={run.job_id}
+                  key={run.pipeline_run_id}
                   run={run}
-                  expanded={expandedRun === run.job_id}
-                  onToggle={() => setExpandedRun(expandedRun === run.job_id ? null : run.job_id)}
+                  expanded={expandedRun === run.pipeline_run_id}
+                  onToggle={() => setExpandedRun(expandedRun === run.pipeline_run_id ? null : run.pipeline_run_id)}
                 />
               ))}
             </tbody>
@@ -920,8 +990,8 @@ function RunRow({ run, expanded, onToggle }: { run: PipelineJobData; expanded: b
   return (
     <>
       <tr onClick={onToggle} style={{ borderBottom: '1px solid #222', cursor: 'pointer' }}>
-        <td style={{ ...tdStyle, textAlign: 'left', fontFamily: 'monospace', fontSize: '11px' }}>
-          {run.job_id}
+        <td style={{ ...tdStyle, textAlign: 'left', fontSize: '11px' }}>
+          <span data-testid="history-run-name" style={{ color: '#93C5FD', fontWeight: 500 }}>{run.run_name}</span>
         </td>
         <td style={tdStyle}>
           <span

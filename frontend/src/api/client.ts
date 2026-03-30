@@ -52,7 +52,8 @@ export interface PipelineStepData {
 }
 
 export interface PipelineJobData {
-  job_id: string
+  pipeline_run_id: string
+  run_name: string
   pipeline_mode: 'se' | 'me'
   execution_mode: 'batch' | 'step'
   status: string
@@ -64,11 +65,11 @@ export interface PipelineJobData {
   message: string
   config: Record<string, unknown>
   created_at?: string
-  entity_ids?: string[]
 }
 
 interface StartPipelineResponse {
-  job_id: string
+  pipeline_run_id: string
+  run_name: string
   status: string
   message: string
 }
@@ -84,12 +85,12 @@ export function startPipeline(
   })
 }
 
-export function fetchPipelineStatus(jobId: string): Promise<PipelineJobData> {
-  return fetchJSON(`/api/pipeline/status?job_id=${encodeURIComponent(jobId)}`)
+export function fetchPipelineStatus(pipelineRunId: string): Promise<PipelineJobData> {
+  return fetchJSON(`/api/pipeline/status?pipeline_run_id=${encodeURIComponent(pipelineRunId)}`)
 }
 
-export function advancePipeline(jobId: string): Promise<PipelineJobData> {
-  return fetchJSON(`/api/pipeline/advance?job_id=${encodeURIComponent(jobId)}`, {
+export function advancePipeline(pipelineRunId: string): Promise<PipelineJobData> {
+  return fetchJSON(`/api/pipeline/advance?pipeline_run_id=${encodeURIComponent(pipelineRunId)}`, {
     method: 'POST',
   })
 }
@@ -102,8 +103,8 @@ export function fetchRuns(limit = 20): Promise<{ runs: PipelineJobData[] }> {
   return fetchJSON(`/api/pipeline/runs?limit=${limit}`)
 }
 
-export function fetchRun(runId: string): Promise<PipelineJobData> {
-  return fetchJSON(`/api/pipeline/runs/${runId}`)
+export function fetchRun(pipelineRunId: string): Promise<PipelineJobData> {
+  return fetchJSON(`/api/pipeline/runs/${pipelineRunId}`)
 }
 
 // DCL Recon
@@ -123,7 +124,7 @@ export interface ReconCheck {
 }
 
 export interface ReconResult {
-  run_id: string | null
+  pipeline_run_id: string | null
   entity_id: string | null
   timestamp: string
   overall: 'pass' | 'warn' | 'fail'
@@ -134,15 +135,15 @@ export interface ReconResult {
 
 export interface ReconHistoryEntry {
   id: number
-  job_id: string
+  pipeline_run_id: string
   entity_id: string | null
-  provenance_tag: string | null
+  run_name: string | null
   overall: 'pass' | 'warn' | 'fail'
   created_at: string
 }
 
-export function fetchDclRecon(jobId: string): Promise<ReconResult> {
-  return fetchJSON(`/api/pipeline/dcl-recon?job_id=${encodeURIComponent(jobId)}`)
+export function fetchDclRecon(pipelineRunId: string): Promise<ReconResult> {
+  return fetchJSON(`/api/pipeline/dcl-recon?pipeline_run_id=${encodeURIComponent(pipelineRunId)}`)
 }
 
 export function fetchReconHistory(limit = 20): Promise<ReconHistoryEntry[]> {
@@ -180,6 +181,23 @@ export interface Engagement {
   state_json: Record<string, unknown>
   created_at: string | null
   updated_at: string | null
+  convergence_engagement_id: string | null
+  engagement_short_name: string | null
+}
+
+// Convergence engagements — canonical source for ME pipeline
+export interface ConvergenceEngagement {
+  engagement_id: string
+  acquirer_entity_id: string
+  target_entity_id: string
+  short_name: string
+  tenant_id: string | null
+  state: string
+  created_at: string | null
+}
+
+export function fetchConvergenceEngagements(): Promise<{ engagements: ConvergenceEngagement[] }> {
+  return fetchJSON('/api/proxy/convergence/api/convergence/engagements')
 }
 
 export function fetchEngagements(): Promise<{ engagements: Engagement[] }> {

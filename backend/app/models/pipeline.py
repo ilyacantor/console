@@ -38,7 +38,8 @@ class PipelineStep(BaseModel):
 
 
 class PipelineJob(BaseModel):
-    job_id: str
+    pipeline_run_id: str
+    run_name: str = ""
     pipeline_mode: PipelineMode
     execution_mode: ExecutionMode
     status: str = "pending"
@@ -67,6 +68,7 @@ class StartPipelineRequest(BaseModel):
 
 
 class StartPipelineResponse(BaseModel):
-    job_id: str
+    pipeline_run_id: str
+    run_name: str
     status: str
     message: str

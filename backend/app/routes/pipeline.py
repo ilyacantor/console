@@ -1,7 +1,7 @@
 """Pipeline endpoints — start, status, advance, history, recon."""
 
-import json
 import logging
+import uuid
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
@@ -15,7 +15,7 @@ from backend.app.models.pipeline import (
     StepStatus,
 )
 from backend.app.services import pipeline_orchestrator
-from backend.app.services.pipeline_orchestrator import PIPELINE_JOBS
+from backend.app.services.pipeline_orchestrator import PIPELINE_JOBS, logical_step_count
 
 import httpx
 
@@ -27,70 +27,81 @@ router = APIRouter()
 @router.post("/start", response_model=StartPipelineResponse)
 async def start_pipeline(req: StartPipelineRequest, background_tasks: BackgroundTasks):
     """Start an SE or ME pipeline in batch or step-by-step mode."""
-    import uuid
+    pipeline_run_id = str(uuid.uuid4())
 
-    job_id = str(uuid.uuid4())[:8]
+    cfg = req.config or {}
+
+    # Provisional run_name — SE: updated when entity_id becomes available.
+    # ME: updated by pre-flight when engagement_short_name is resolved.
+    entity_id = cfg.get("entity_id")
+    run_name = pipeline_orchestrator.make_run_name(entity_id, pipeline_run_id)
 
     steps = (pipeline_orchestrator.create_se_steps()
              if req.mode == PipelineMode.SE
              else pipeline_orchestrator.create_me_steps())
 
+    # ME: use logical step count (parallel groups = 1 step)
+    total = (logical_step_count(steps)
+             if req.mode == PipelineMode.ME
+             else len(steps))
+
     job = PipelineJob(
-        job_id=job_id,
+        pipeline_run_id=pipeline_run_id,
+        run_name=run_name,
         pipeline_mode=req.mode,
         execution_mode=req.execution,
         started_at=pipeline_orchestrator._now(),
         steps=steps,
-        total_steps=len(steps),
+        total_steps=total,
         message=f"{req.mode.value.upper()} pipeline started "
                 f"({req.execution.value} mode)",
-        config=req.config or {},
+        config=cfg,
     )
 
-    # ME pipeline: generate shared triples_id for provenance tracking
-    if req.mode == PipelineMode.ME:
-        job.config["_triples_id"] = f"triples_{job_id}"
-
-    PIPELINE_JOBS[job_id] = job
+    PIPELINE_JOBS[pipeline_run_id] = job
 
     if req.execution == ExecutionMode.BATCH:
         background_tasks.add_task(pipeline_orchestrator.run_pipeline_batch,
-                                  job_id)
+                                  pipeline_run_id)
         logger.info(f"[PIPELINE] {req.mode.value.upper()} batch pipeline "
-                    f"started: job_id={job_id}")
+                    f"started: pipeline_run_id={pipeline_run_id}, "
+                    f"run_name={run_name}")
     else:
         first_indices = pipeline_orchestrator.get_next_step_indices(job)
         if first_indices:
             background_tasks.add_task(pipeline_orchestrator.run_single_step,
-                                      job_id, first_indices)
+                                      pipeline_run_id, first_indices)
             logger.info(f"[PIPELINE] {req.mode.value.upper()} step pipeline "
-                        f"started: job_id={job_id}")
+                        f"started: pipeline_run_id={pipeline_run_id}, "
+                        f"run_name={run_name}")
 
     return StartPipelineResponse(
-        job_id=job_id,
+        pipeline_run_id=pipeline_run_id,
+        run_name=run_name,
         status="started",
         message=f"{req.mode.value.upper()} pipeline started. "
-                f"Poll /api/pipeline/status?job_id={job_id} for progress.",
+                f"Poll /api/pipeline/status?pipeline_run_id={pipeline_run_id} "
+                f"for progress.",
     )
 
 
 @router.get("/status", response_model=PipelineJob)
-async def get_pipeline_status(job_id: str):
+async def get_pipeline_status(pipeline_run_id: str):
     """Get the current status of a pipeline job (in-memory, fast)."""
-    job = PIPELINE_JOBS.get(job_id)
+    job = PIPELINE_JOBS.get(pipeline_run_id)
     if not job:
         raise HTTPException(status_code=404,
-                            detail=f"Job {job_id} not found")
+                            detail=f"Pipeline run {pipeline_run_id} not found")
     return job
 
 
 @router.post("/advance", response_model=PipelineJob)
-async def advance_pipeline(job_id: str, background_tasks: BackgroundTasks):
+async def advance_pipeline(pipeline_run_id: str, background_tasks: BackgroundTasks):
     """Run the next pending step in step-by-step mode."""
-    job = PIPELINE_JOBS.get(job_id)
+    job = PIPELINE_JOBS.get(pipeline_run_id)
     if not job:
         raise HTTPException(status_code=404,
-                            detail=f"Job {job_id} not found")
+                            detail=f"Pipeline run {pipeline_run_id} not found")
 
     if job.execution_mode != ExecutionMode.STEP:
         raise HTTPException(
@@ -115,8 +126,8 @@ async def advance_pipeline(job_id: str, background_tasks: BackgroundTasks):
         )
 
     background_tasks.add_task(pipeline_orchestrator.run_single_step,
-                              job_id, next_indices)
-    logger.info(f"[PIPELINE] Advancing {job_id}: step(s) {next_indices}")
+                              pipeline_run_id, next_indices)
+    logger.info(f"[PIPELINE] Advancing {pipeline_run_id}: step(s) {next_indices}")
 
     return job
 
@@ -140,26 +151,32 @@ async def run_pipeline_legacy(req: dict):
             detail="ME mode requires at least 2 entities.",
         )
 
-    import uuid
-    job_id = str(uuid.uuid4())[:8]
+    pipeline_run_id = str(uuid.uuid4())
+    entity_id = (req.get("config") or {}).get("entity_id")
+    run_name = pipeline_orchestrator.make_run_name(entity_id, pipeline_run_id)
 
     steps = (pipeline_orchestrator.create_se_steps()
              if mode == PipelineMode.SE
              else pipeline_orchestrator.create_me_steps())
 
+    total = (logical_step_count(steps)
+             if mode == PipelineMode.ME
+             else len(steps))
+
     job = PipelineJob(
-        job_id=job_id,
+        pipeline_run_id=pipeline_run_id,
+        run_name=run_name,
         pipeline_mode=mode,
         execution_mode=ExecutionMode.BATCH,
         started_at=pipeline_orchestrator._now(),
         steps=steps,
-        total_steps=len(steps),
+        total_steps=total,
         message=f"{mode.value.upper()} pipeline started (batch mode)",
-        config={"entities": entities},
+        config={"entities": entities, **(req.get("config") or {})},
     )
 
-    PIPELINE_JOBS[job_id] = job
-    await pipeline_orchestrator.run_pipeline_batch(job_id)
+    PIPELINE_JOBS[pipeline_run_id] = job
+    await pipeline_orchestrator.run_pipeline_batch(pipeline_run_id)
     return job.model_dump()
 
 
@@ -179,19 +196,19 @@ async def get_runs(limit: int = Query(default=20, ge=1, le=100)):
     return {"runs": jobs}
 
 
-@router.get("/runs/{job_id}")
-async def get_run(job_id: str):
+@router.get("/runs/{pipeline_run_id}")
+async def get_run(pipeline_run_id: str):
     """Get a single pipeline job by ID."""
     # Check in-memory first (active jobs)
-    job = PIPELINE_JOBS.get(job_id)
+    job = PIPELINE_JOBS.get(pipeline_run_id)
     if job:
         return job.model_dump()
 
     # Fall back to Postgres
-    row = await db.get_pipeline_job(job_id)
+    row = await db.get_pipeline_job(pipeline_run_id)
     if not row:
         raise HTTPException(status_code=404,
-                            detail=f"Job {job_id} not found")
+                            detail=f"Pipeline run {pipeline_run_id} not found")
     return row
 
 
@@ -214,17 +231,17 @@ async def update_baselines(baselines: dict):
 # ── DCL Recon ────────────────────────────────────────────────────────
 
 @router.get("/dcl-recon")
-async def get_dcl_recon(job_id: str):
+async def get_dcl_recon(pipeline_run_id: str):
     """Fetch DCL recon checks for a completed pipeline job."""
-    job = PIPELINE_JOBS.get(job_id)
+    job = PIPELINE_JOBS.get(pipeline_run_id)
     if not job:
         raise HTTPException(status_code=404,
-                            detail=f"Job {job_id} not found")
+                            detail=f"Pipeline run {pipeline_run_id} not found")
 
     if not pipeline_orchestrator.is_terminal(job.status):
         raise HTTPException(
             status_code=400,
-            detail=f"Job {job_id} is not in a terminal state "
+            detail=f"Pipeline run {pipeline_run_id} is not in a terminal state "
                    f"(status={job.status}). Recon checks are only available "
                    f"after pipeline completion.",
         )
@@ -268,14 +285,11 @@ async def get_dcl_recon(job_id: str):
     result = resp.json()
 
     # Persist to recon_history
-    provenance_tag = context.get("provenance_tag")
-    run_id = result.get("run_id") or context.get("run_id")
     history_id = await db.save_recon(
-        job_id=job_id,
+        pipeline_run_id=pipeline_run_id,
         pipeline_mode=job.pipeline_mode.value,
         entity_id=entity_id,
-        run_id=run_id,
-        provenance_tag=provenance_tag,
+        run_name=job.run_name,
         overall=result.get("overall", "fail"),
         checks=result.get("checks", []),
     )

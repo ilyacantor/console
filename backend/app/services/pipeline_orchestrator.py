@@ -93,6 +93,25 @@ def _extract_error(resp: httpx.Response) -> str:
         return resp.text[:500] if resp.text else f"HTTP {resp.status_code}"
 
 
+def make_run_name(
+    entity_id: str | None,
+    pipeline_run_id: str,
+    engagement_short_name: str | None = None,
+) -> str:
+    """Build human-readable run label.
+
+    SE:  {entity_id}-{short_hash}  (e.g., BlueLogic-NEQ8-a9ed)
+    ME:  {engagement_short_name}-{short_hash}  (e.g., MerCas-2571)
+    short_hash = first 4 hex chars of pipeline_run_id (no hyphens).
+    """
+    short_hash = pipeline_run_id.replace("-", "")[:4]
+    if engagement_short_name:
+        return f"{engagement_short_name}-{short_hash}"
+    if entity_id:
+        return f"{entity_id}-{short_hash}"
+    return short_hash
+
+
 # ── Pipeline Step Definitions ────────────────────────────────────────
 
 def create_se_steps() -> list[PipelineStep]:
@@ -115,20 +134,34 @@ def create_se_steps() -> list[PipelineStep]:
 def create_me_steps() -> list[PipelineStep]:
     return [
         PipelineStep(name="farm_financials_a",
-                     display_name="DCL Ingest (Entity A)",
-                     message="Generate financial triples for entity A",
-                     parallel_group="farm_financials"),
+                     display_name="Farm + DCL (Acquirer)",
+                     message="Generate & ingest financial triples for acquirer",
+                     parallel_group="entity_ingest"),
         PipelineStep(name="farm_financials_b",
-                     display_name="DCL Ingest (Entity B)",
-                     message="Generate financial triples for entity B",
-                     parallel_group="farm_financials"),
-        PipelineStep(name="dcl_ingest", display_name="DCL Ingest Verify",
-                     message="Verify triples landed in DCL"),
+                     display_name="Farm + DCL (Target)",
+                     message="Generate & ingest financial triples for target",
+                     parallel_group="entity_ingest"),
         PipelineStep(name="cofa_unification", display_name="COFA Unification",
-                     message="Trigger COFA mapping via Maestra"),
+                     message="Unify charts of accounts via Convergence"),
+        PipelineStep(name="verify", display_name="Verify",
+                     message="Verify COFA output"),
         PipelineStep(name="complete", display_name="Pipeline Complete",
                      message="Summarize pipeline run"),
     ]
+
+
+def logical_step_count(steps: list[PipelineStep]) -> int:
+    """Count steps where parallel groups count as 1 logical step."""
+    seen_groups: set[str] = set()
+    count = 0
+    for s in steps:
+        if s.parallel_group:
+            if s.parallel_group not in seen_groups:
+                seen_groups.add(s.parallel_group)
+                count += 1
+        else:
+            count += 1
+    return count
 
 
 # ── Step Execution Dispatcher ────────────────────────────────────────
@@ -164,8 +197,10 @@ async def _execute_step(
             await _step_dcl_ingest_verify(client, step, job, context, t0)
         elif step.name == "cofa_unification":
             await _step_cofa_unification(client, step, job, context, t0)
+        elif step.name == "verify":
+            await _step_verify(client, step, job, context, t0)
         elif step.name == "complete":
-            _step_complete(step, job, t0)
+            _step_complete(step, job, context, t0)
         else:
             _mark_step(step, StepStatus.FAILED,
                        f"Unknown step: {step.name}", start_time=t0)
@@ -189,7 +224,7 @@ async def _step_farm_snapshot(
     t0: float,
 ) -> None:
     """SE Step 1: Create Farm snapshot.  Farm owns identity generation —
-    Console sends no tenant_id, entity_id, or seed.  Farm returns a fresh
+    Console sends tenant_id only.  Farm returns farm_manifest_id and a fresh
     entity_id each run which Console carries forward through the pipeline."""
     url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL, "Farm Snapshot")
     cfg = job.config
@@ -201,6 +236,8 @@ async def _step_farm_snapshot(
         body["seed"] = cfg["seed"]
     if cfg.get("enterprise_profile"):
         body["enterprise_profile"] = cfg["enterprise_profile"]
+    if context.get("tenant_id"):
+        body["tenant_id"] = context["tenant_id"]
 
     try:
         resp = await client.post(f"{url}/api/snapshots", json=body,
@@ -219,19 +256,19 @@ async def _step_farm_snapshot(
 
     if resp.status_code == 200:
         data = resp.json()
-        context["snapshot_id"] = data.get("snapshot_id")
-        # SE mode: Farm generates entity_id — read it back into context
+        # Capture namespaced ID from Farm
+        farm_manifest_id = data.get("farm_manifest_id") or data.get("snapshot_id")
+        if farm_manifest_id:
+            context["farm_manifest_id"] = farm_manifest_id
+        # Farm generates entity_id — read it into context
         if data.get("entity_id") and "entity_id" not in context:
             context["entity_id"] = data["entity_id"]
         if data.get("tenant_name") and "entity_name" not in context:
             context["entity_name"] = data["tenant_name"]
-        provenance = (context.get("entity_name")
-                      or context.get("entity_id")
-                      or data.get("tenant_id"))
-        if provenance:
-            context["provenance_tag"] = provenance
-            for s in job.steps:
-                s.provenance_tag = provenance
+        if data.get("tenant_id"):
+            context["tenant_id"] = data["tenant_id"]
+        # Update run_name now that entity_id is available
+        _update_run_name(job, context)
         _mark_step(step, StepStatus.SUCCESS, "Snapshot ready",
                    data=data, start_time=t0)
 
@@ -260,19 +297,18 @@ async def _step_farm_snapshot(
                 poll_status = poll_data.get("status", "")
                 if poll_status == "completed":
                     result = poll_data.get("result", {})
-                    context["snapshot_id"] = (result.get("snapshot_id")
-                                              or data.get("snapshot_id"))
+                    farm_manifest_id = (result.get("farm_manifest_id")
+                                        or result.get("snapshot_id")
+                                        or data.get("snapshot_id"))
+                    if farm_manifest_id:
+                        context["farm_manifest_id"] = farm_manifest_id
                     if result.get("entity_id") and "entity_id" not in context:
                         context["entity_id"] = result["entity_id"]
                     if result.get("tenant_name") and "entity_name" not in context:
                         context["entity_name"] = result["tenant_name"]
-                    provenance = (context.get("entity_name")
-                                  or context.get("entity_id")
-                                  or result.get("tenant_id"))
-                    if provenance:
-                        context["provenance_tag"] = provenance
-                        for s in job.steps:
-                            s.provenance_tag = provenance
+                    if result.get("tenant_id"):
+                        context["tenant_id"] = result["tenant_id"]
+                    _update_run_name(job, context)
                     _mark_step(step, StepStatus.SUCCESS, "Snapshot ready",
                                data=result, start_time=t0)
                     return
@@ -305,19 +341,19 @@ async def _step_aod_discovery(
     farm_url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL,
                             "AOD Discovery (Farm URL)")
 
-    snapshot_id = context.get("snapshot_id")
-    tenant_id = context.get("tenant_id") or job.config.get("tenant_id")
-    entity_id = context.get("entity_id") or job.config.get("entity_id")
+    farm_manifest_id = context.get("farm_manifest_id")
+    tenant_id = context.get("tenant_id")
+    entity_id = context.get("entity_id")
 
-    if not snapshot_id:
+    if not farm_manifest_id:
         _mark_step(step, StepStatus.FAILED,
-                   "No snapshot_id available — Farm Snapshot step must "
+                   "No farm_manifest_id available — Farm Snapshot step must "
                    "succeed first",
                    start_time=t0)
         return
 
     body: dict[str, Any] = {
-        "snapshot_id": snapshot_id,
+        "snapshot_id": farm_manifest_id,
         "farm_base_url": farm_url,
     }
     if tenant_id:
@@ -342,11 +378,17 @@ async def _step_aod_discovery(
 
     if resp.status_code == 200:
         data = resp.json()
-        context["run_id"] = data.get("run_id")
+        # Capture namespaced ID from AOD
+        aod_discovery_id = data.get("aod_discovery_id") or data.get("run_id")
+        if aod_discovery_id:
+            context["aod_discovery_id"] = aod_discovery_id
+        consumed = data.get("consumed_snapshot_id")
+        if consumed:
+            context["consumed_snapshot_id"] = consumed
         counts = data.get("counts") or {}
         asset_count = counts.get("assets_admitted", "?")
         _mark_step(step, StepStatus.SUCCESS,
-                   f"Discovery complete: run_id={context.get('run_id')}, "
+                   f"Discovery complete: aod_discovery_id={aod_discovery_id}, "
                    f"{asset_count} assets",
                    data=data, start_time=t0)
     else:
@@ -366,10 +408,14 @@ async def _step_aod_aam_handoff(
     """SE Step 3: Export AOD candidates to AAM."""
     url = _require_url("AOD_BASE_URL", config.AOD_BASE_URL, "AOD-AAM Handoff")
 
-    run_id = context.get("run_id")
-    if not run_id:
+    aod_discovery_id = context.get("aod_discovery_id")
+    tenant_id = context.get("tenant_id")
+    entity_id = context.get("entity_id")
+
+    if not aod_discovery_id:
         _mark_step(step, StepStatus.FAILED,
-                   "No run_id available — AOD Discovery step must succeed first",
+                   "No aod_discovery_id available — AOD Discovery step must "
+                   "succeed first",
                    start_time=t0)
         return
 
@@ -377,7 +423,12 @@ async def _step_aod_aam_handoff(
         resp = await client.post(
             f"{url}/api/handoff/aam/export",
             headers=_aod_headers(),
-            params={"run_id": run_id, "status_filter": "all"},
+            params={
+                "run_id": aod_discovery_id,
+                "status_filter": "all",
+                **({"tenant_id": tenant_id} if tenant_id else {}),
+                **({"entity_id": entity_id} if entity_id else {}),
+            },
         )
     except httpx.ConnectError:
         _mark_step(step, StepStatus.FAILED,
@@ -394,6 +445,13 @@ async def _step_aod_aam_handoff(
 
     if resp.status_code == 200:
         data = resp.json()
+        # Capture namespaced ID from handoff
+        handoff_id = data.get("handoff_id")
+        if handoff_id:
+            context["handoff_id"] = handoff_id
+        source_aod = data.get("source_aod_discovery_id")
+        if source_aod:
+            context["source_aod_discovery_id"] = source_aod
         candidates = data.get("candidates_sent", data.get("count", "?"))
         _mark_step(step, StepStatus.SUCCESS,
                    f"Exported {candidates} candidates to AAM",
@@ -415,9 +473,20 @@ async def _step_aam_inference(
     """SE Step 4: Trigger AAM pipe inference."""
     url = _require_url("AAM_BASE_URL", config.AAM_BASE_URL, "AAM Inference")
 
+    body: dict[str, Any] = {}
+    handoff_id = context.get("handoff_id")
+    tenant_id = context.get("tenant_id")
+    entity_id = context.get("entity_id")
+    if handoff_id:
+        body["handoff_id"] = handoff_id
+    if tenant_id:
+        body["tenant_id"] = tenant_id
+    if entity_id:
+        body["entity_id"] = entity_id
+
     try:
         resp = await client.post(f"{url}/api/aam/infer",
-                                 headers=_json_headers())
+                                 json=body, headers=_json_headers())
     except httpx.ConnectError:
         _mark_step(step, StepStatus.FAILED,
                    f"Could not reach AAM at {url}/api/aam/infer — "
@@ -432,6 +501,13 @@ async def _step_aam_inference(
 
     if resp.status_code == 200:
         data = resp.json()
+        # Capture namespaced ID from AAM
+        aam_inference_id = data.get("aam_inference_id")
+        if aam_inference_id:
+            context["aam_inference_id"] = aam_inference_id
+        source_handoff = data.get("source_handoff_id")
+        if source_handoff:
+            context["source_handoff_id"] = source_handoff
         pipes = data.get("pipes_created", data.get("pipe_count", "?"))
         _mark_step(step, StepStatus.SUCCESS,
                    f"Inference complete: {pipes} pipes",
@@ -465,7 +541,9 @@ async def _step_farm_financials(
     cfg = job.config
     farm_cfg = cfg.get(config_key, {})
 
-    run_id = context.get("run_id") or str(uuid.uuid4())
+    pipeline_run_id = context.get("pipeline_run_id", job.pipeline_run_id)
+    farm_manifest_id = (context.get("farm_manifest_id")
+                        or farm_cfg.get("farm_manifest_id"))
     tenant_id = (context.get("tenant_id")
                  or farm_cfg.get("tenant_id")
                  or cfg.get("tenant_id")
@@ -474,7 +552,7 @@ async def _step_farm_financials(
                  or context.get("entity_id")
                  or cfg.get("entity_id"))
     snapshot_name = (farm_cfg.get("snapshot_name")
-                     or context.get("snapshot_id")
+                     or context.get("farm_manifest_id")
                      or "latest")
     pipe_id = farm_cfg.get("pipe_id", f"{step.name}-financials")
     system = farm_cfg.get("system", "netsuite")
@@ -488,7 +566,6 @@ async def _step_farm_financials(
         return
 
     body: dict[str, Any] = {
-        "run_id": run_id,
         "source": {
             "pipe_id": pipe_id,
             "system": system,
@@ -502,9 +579,12 @@ async def _step_farm_financials(
         },
     }
 
-    triples_id = cfg.get("_triples_id")
-    if triples_id:
-        body["target"]["triples_id"] = triples_id
+    # Pass farm_manifest_id if available (provenance link)
+    if farm_manifest_id:
+        body["farm_manifest_id"] = farm_manifest_id
+
+    # pipeline_run_id as the E2E correlation tag — replaces old triples_id
+    body["target"]["pipeline_run_id"] = pipeline_run_id
 
     try:
         resp = await client.post(f"{url}/api/farm/manifest-intake",
@@ -532,20 +612,45 @@ async def _step_farm_financials(
                        f"DCL ingest failed (Farm status={farm_status}): {error_detail}",
                        data=data, start_time=t0)
             return
+
+        # Capture expansion metrics from DCL ingest
         rows = data.get("rows_generated", 0)
         push = data.get("push_result") or {}
         accepted = push.get("rows_accepted")
+        triples_written = push.get("triples_written") or accepted or rows
+        source_rows = data.get("source_rows") or rows
+
+        # Capture dcl_ingest_id from response — per-entity tracking for ME
+        dcl_ingest_id = (data.get("dcl_ingest_id")
+                         or push.get("dcl_ingest_id"))
+        if dcl_ingest_id:
+            if config_key == "farm_config_a":
+                context["dcl_ingest_id_a"] = dcl_ingest_id
+            elif config_key == "farm_config_b":
+                context["dcl_ingest_id_b"] = dcl_ingest_id
+            else:
+                context["dcl_ingest_id"] = dcl_ingest_id
+            context.setdefault("dcl_ingest_ids", []).append(dcl_ingest_id)
+        source_farm = (data.get("source_farm_manifest_id")
+                       or push.get("source_farm_manifest_id"))
+        if source_farm:
+            context["source_farm_manifest_id"] = source_farm
+
+        # Store expansion metrics in context — per-entity suffix for ME
+        suffix = "_a" if config_key == "farm_config_a" else (
+            "_b" if config_key == "farm_config_b" else "")
+        context[f"source_rows{suffix}"] = source_rows
+        context[f"triples_written{suffix}"] = triples_written
+        if source_rows and source_rows > 0:
+            context[f"expansion_factor{suffix}"] = round(
+                triples_written / source_rows, 1)
+
         if accepted is not None and accepted != rows:
-            triples = f"{accepted} accepted"
+            triples_label = f"{accepted} accepted"
         else:
-            triples = str(rows)
-        echoed_triples_id = data.get("triples_id")
-        if echoed_triples_id and not any(s.provenance_tag for s in job.steps):
-            context["provenance_tag"] = echoed_triples_id
-            for s in job.steps:
-                s.provenance_tag = echoed_triples_id
+            triples_label = str(rows)
         _mark_step(step, StepStatus.SUCCESS,
-                   f"Financial triples generated: {triples}",
+                   f"Financial triples generated: {triples_label}",
                    data=data, start_time=t0)
     else:
         _mark_step(step, StepStatus.FAILED,
@@ -564,9 +669,14 @@ async def _step_dcl_ingest_verify(
     """Verify triples landed in DCL."""
     url = _require_url("DCL_BASE_URL", config.DCL_BASE_URL, "DCL Ingest Verify")
 
+    params: dict[str, str] = {}
+    dcl_ingest_id = context.get("dcl_ingest_id")
+    if dcl_ingest_id:
+        params["dcl_ingest_id"] = dcl_ingest_id
+
     try:
         resp = await client.get(f"{url}/api/dcl/triples/overview",
-                                headers=_json_headers())
+                                headers=_json_headers(), params=params)
     except httpx.ConnectError:
         _mark_step(step, StepStatus.FAILED,
                    f"Could not reach DCL at {url}/api/dcl/triples/overview — "
@@ -582,6 +692,9 @@ async def _step_dcl_ingest_verify(
 
     if resp.status_code == 200:
         data = resp.json()
+        verify_id = data.get("verify_id")
+        if verify_id:
+            context["verify_id"] = verify_id
         total = data.get("total_triples", data.get("count", 0))
         _mark_step(step, StepStatus.SUCCESS,
                    f"DCL has {total:,} triples",
@@ -600,91 +713,53 @@ async def _step_cofa_unification(
     context: dict[str, Any],
     t0: float,
 ) -> None:
-    """COFA unification via Platform's Maestra HTTP endpoint.
+    """COFA unification via Convergence HTTP endpoint.
 
-    Console doesn't host Maestra in-process — calls Platform's API.
+    Convergence owns all ME engines including COFA.
+    Sends dcl_ingest_ids array + engagement identity.
     """
-    platform_url = _require_url("PLATFORM_BASE_URL", config.PLATFORM_BASE_URL,
-                                "COFA Unification")
+    convergence_url = _require_url(
+        "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL,
+        "COFA Unification")
 
-    cfg = job.config
-    # Console's config.engagement_id is a Console-side UUID (from console.engagements).
-    # Platform uses its own engagement IDs (stored in engagement_state).
-    # Always resolve from Platform's API so we get the correct ID.
-    engagement_id = None
+    # Engagement identity from ME pre-flight (set in run_pipeline_batch)
+    engagement_id = context.get("convergence_engagement_id")
     if not engagement_id:
-        engagements_url = f"{platform_url}/api/maestra/engagements"
-        try:
-            eng_resp = await client.get(engagements_url)
-        except httpx.ConnectError:
-            _mark_step(step, StepStatus.FAILED,
-                       f"Could not reach Platform at {engagements_url} — "
-                       f"connection refused. Verify Platform is running.",
-                       start_time=t0)
-            return
-        except httpx.TimeoutException as e:
-            _mark_step(step, StepStatus.FAILED,
-                       f"Platform request timed out at "
-                       f"{engagements_url} — {e}",
-                       start_time=t0)
-            return
+        _mark_step(step, StepStatus.FAILED,
+                   "No convergence_engagement_id in pipeline context — "
+                   "ME pre-flight must resolve engagement from Convergence "
+                   "before COFA can run.",
+                   start_time=t0)
+        return
 
-        if eng_resp.status_code != 200:
-            _mark_step(step, StepStatus.FAILED,
-                       f"Could not fetch engagements ({eng_resp.status_code}): "
-                       f"{_extract_error(eng_resp)}",
-                       start_time=t0)
-            return
+    # Collect dcl_ingest_ids from completed Farm steps
+    dcl_ingest_ids = context.get("dcl_ingest_ids", [])
+    if not dcl_ingest_ids:
+        _mark_step(step, StepStatus.FAILED,
+                   "No dcl_ingest_ids in pipeline context — "
+                   "Farm + DCL ingest steps must succeed before COFA.",
+                   start_time=t0)
+        return
 
-        engagements = eng_resp.json()
-        if isinstance(engagements, dict):
-            engagements = engagements.get("engagements", [])
+    pipeline_run_id = context.get("pipeline_run_id", job.pipeline_run_id)
+    tenant_id = context.get("tenant_id")
 
-        active = None
-        for eng in engagements:
-            if eng.get("state") == "active":
-                active = eng
-                break
-
-        if not active:
-            by_state: dict[str, list] = {}
-            for eng in engagements:
-                by_state.setdefault(eng.get("state", "unknown"), []).append(
-                    eng.get("engagement_id", "?")
-                )
-            state_summary = "; ".join(
-                f"{st}: {', '.join(ids)}" for st, ids in by_state.items()
-            )
-            hint = ""
-            drafts = by_state.get("draft", [])
-            if drafts:
-                hint = (
-                    f" To activate, PATCH /api/maestra/engagements/"
-                    f"{drafts[0]}/state with {{\"new_state\": \"active\"}}."
-                )
-            _mark_step(step, StepStatus.FAILED,
-                       f"No active engagement found. "
-                       f"{len(engagements)} engagement(s) exist — "
-                       f"{state_summary or 'none'}.{hint}",
-                       start_time=t0)
-            return
-
-        engagement_id = active["engagement_id"]
-
-    # Send COFA initiation message
-    cofa_url = f"{platform_url}/api/maestra/cofa-chat"
-    body = {
+    cofa_url = f"{convergence_url}/api/convergence/cofa/unify"
+    body: dict[str, Any] = {
         "engagement_id": engagement_id,
-        "message": "Begin COFA unification — map both entity charts of accounts",
-        "session_id": f"operator-cofa-{job.job_id}",
+        "dcl_ingest_ids": dcl_ingest_ids,
+        "pipeline_run_id": pipeline_run_id,
     }
+    if tenant_id:
+        body["tenant_id"] = tenant_id
 
     try:
-        resp = await client.post(cofa_url, json=body)
+        resp = await client.post(cofa_url, json=body, headers=_json_headers())
     except httpx.ConnectError:
         _mark_step(step, StepStatus.FAILED,
-                   f"Could not reach Platform COFA at {cofa_url} — "
-                   f"connection refused.",
+                   f"Could not reach Convergence COFA at {cofa_url} — "
+                   f"connection refused. Verify Convergence is running on "
+                   f"port 8010.",
                    start_time=t0)
         return
     except httpx.TimeoutException as e:
@@ -700,36 +775,149 @@ async def _step_cofa_unification(
                    start_time=t0)
         return
 
-    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    data = resp.json() if resp.headers.get(
+        "content-type", "").startswith("application/json") else {}
+
+    cofa_run_id = data.get("cofa_run_id")
+    if cofa_run_id:
+        context["cofa_run_id"] = cofa_run_id
+    consumed = data.get("consumed_dcl_ingest_ids")
+    if consumed:
+        context["consumed_dcl_ingest_ids"] = consumed
+
     _mark_step(step, StepStatus.SUCCESS,
-               f"COFA complete (engagement={engagement_id})",
+               f"COFA complete — cofa_run_id={cofa_run_id}, "
+               f"consumed {len(dcl_ingest_ids)} ingest(s)",
+               data=data, start_time=t0)
+
+
+async def _step_verify(
+    client: httpx.AsyncClient,
+    step: PipelineStep,
+    job: PipelineJob,
+    context: dict[str, Any],
+    t0: float,
+) -> None:
+    """Verify COFA output via Convergence.
+
+    Runs AFTER COFA completes — explicit DAG dependency.
+    Sends cofa_run_id, captures verify_id.
+    """
+    convergence_url = _require_url(
+        "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL, "Verify")
+
+    cofa_run_id = context.get("cofa_run_id")
+    if not cofa_run_id:
+        _mark_step(step, StepStatus.FAILED,
+                   "No cofa_run_id in pipeline context — "
+                   "COFA Unification must succeed before Verify.",
+                   start_time=t0)
+        return
+
+    verify_url = f"{convergence_url}/api/convergence/verify"
+    body: dict[str, Any] = {"cofa_run_id": cofa_run_id}
+    tenant_id = context.get("tenant_id")
+    if tenant_id:
+        body["tenant_id"] = tenant_id
+    pipeline_run_id = context.get("pipeline_run_id", job.pipeline_run_id)
+    body["pipeline_run_id"] = pipeline_run_id
+
+    try:
+        resp = await client.post(verify_url, json=body,
+                                 headers=_json_headers())
+    except httpx.ConnectError:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Could not reach Convergence Verify at {verify_url} — "
+                   f"connection refused. Verify Convergence is running on "
+                   f"port 8010.",
+                   start_time=t0)
+        return
+    except httpx.TimeoutException as e:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Verify request timed out at {verify_url} — {e}",
+                   start_time=t0)
+        return
+
+    if resp.status_code != 200:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Verify failed ({resp.status_code}): "
+                   f"{_extract_error(resp)}",
+                   start_time=t0)
+        return
+
+    data = resp.json() if resp.headers.get(
+        "content-type", "").startswith("application/json") else {}
+
+    verify_id = data.get("verify_id")
+    if verify_id:
+        context["verify_id"] = verify_id
+
+    _mark_step(step, StepStatus.SUCCESS,
+               f"Verify complete — verify_id={verify_id}",
                data=data, start_time=t0)
 
 
 def _step_complete(
     step: PipelineStep,
     job: PipelineJob,
+    context: dict[str, Any],
     t0: float,
 ) -> None:
     """Final summary step."""
     succeeded = sum(1 for s in job.steps if s.status == StepStatus.SUCCESS)
     failed = sum(1 for s in job.steps if s.status == StepStatus.FAILED)
     skipped = sum(1 for s in job.steps if s.status == StepStatus.SKIPPED)
-    total = len(job.steps) - 1  # exclude the complete step itself
+    # Logical count excludes the complete step and treats parallel groups as 1
+    steps_except_complete = [s for s in job.steps if s.name != "complete"]
+    total = logical_step_count(steps_except_complete)
 
     elapsed_ms = 0
     for s in job.steps:
         if s.duration_ms:
             elapsed_ms += s.duration_ms
 
-    summary = {
+    summary: dict[str, Any] = {
         "steps_succeeded": succeeded,
         "steps_failed": failed,
         "steps_skipped": skipped,
         "steps_total": total,
         "total_elapsed_ms": elapsed_ms,
         "pipeline_mode": job.pipeline_mode.value,
+        "run_name": job.run_name,
+        "entity_id": context.get("entity_id"),
     }
+
+    # ME: aggregate per-entity expansion metrics
+    if job.pipeline_mode == PipelineMode.ME:
+        source_rows = (
+            (context.get("source_rows_a") or 0)
+            + (context.get("source_rows_b") or 0))
+        triples_written = (
+            (context.get("triples_written_a") or 0)
+            + (context.get("triples_written_b") or 0))
+        if source_rows:
+            summary["source_rows"] = source_rows
+        if triples_written:
+            summary["triples_written"] = triples_written
+        if source_rows and source_rows > 0 and triples_written:
+            summary["expansion_factor"] = round(
+                triples_written / source_rows, 1)
+        # ME identity
+        summary["engagement_short_name"] = context.get(
+            "engagement_short_name")
+        summary["convergence_engagement_id"] = context.get(
+            "convergence_engagement_id")
+    else:
+        # SE: single-entity metrics
+        source_rows = context.get("source_rows")
+        triples_written = context.get("triples_written")
+        expansion_factor = context.get("expansion_factor")
+        if source_rows is not None:
+            summary["source_rows"] = source_rows
+        if triples_written is not None:
+            summary["triples_written"] = triples_written
+        if expansion_factor is not None:
+            summary["expansion_factor"] = expansion_factor
 
     if failed > 0:
         _mark_step(step, StepStatus.SUCCESS,
@@ -743,47 +931,210 @@ def _step_complete(
                    data=summary, start_time=t0)
 
 
+# ── Run Name Management ─────────────────────────────────────────────
+
+def _update_run_name(job: PipelineJob, context: dict[str, Any]) -> None:
+    """Update job.run_name when identity becomes available.
+
+    SE: entity_id from Farm.
+    ME: engagement_short_name from Convergence pre-flight.
+    Also sets provenance_tag on all steps to run_name for UI display.
+    """
+    entity_id = context.get("entity_id")
+    engagement_short_name = context.get("engagement_short_name")
+    new_name = make_run_name(
+        entity_id, job.pipeline_run_id,
+        engagement_short_name=engagement_short_name)
+    job.run_name = new_name
+    for s in job.steps:
+        s.provenance_tag = new_name
+
+
+# ── ME Pre-flight ───────────────────────────────────────────────────
+
+async def _me_preflight(
+    client: httpx.AsyncClient,
+    job: PipelineJob,
+    context: dict[str, Any],
+    cfg: dict[str, Any],
+) -> bool:
+    """Fetch engagement from Convergence, populate context + per-entity configs.
+
+    Returns True on success, False on failure (caller aborts pipeline).
+    Sets: convergence_engagement_id, engagement_short_name, tenant_id,
+          farm_config_a.entity_id, farm_config_b.entity_id, run_name.
+    """
+    convergence_url = config.CONVERGENCE_BASE_URL
+    if not convergence_url:
+        logger.error("[PIPELINE] CONVERGENCE_BASE_URL not configured — "
+                     "cannot run ME pre-flight")
+        return False
+
+    convergence_url = convergence_url.rstrip("/")
+
+    # Option A: Convergence engagement_id already in config (from dropdown)
+    conv_engagement_id = cfg.get("convergence_engagement_id")
+
+    # Option B: Console engagement_id → look up its linked Convergence ID
+    console_engagement_id = cfg.get("engagement_id")
+
+    if conv_engagement_id:
+        # Fetch directly from Convergence by ID
+        url = (f"{convergence_url}/api/convergence/engagements/"
+               f"{conv_engagement_id}")
+        try:
+            resp = await client.get(url, headers=_json_headers())
+        except httpx.ConnectError:
+            logger.error(
+                f"[PIPELINE] ME pre-flight — Could not reach Convergence "
+                f"at {url} — connection refused")
+            return False
+        except httpx.TimeoutException:
+            logger.error(
+                f"[PIPELINE] ME pre-flight — Convergence timed out at {url}")
+            return False
+
+        if resp.status_code != 200:
+            logger.error(
+                f"[PIPELINE] ME pre-flight — Convergence returned "
+                f"{resp.status_code}: {_extract_error(resp)}")
+            return False
+
+        eng = resp.json()
+    else:
+        # Fetch engagement list from Convergence and match by entity pair
+        # from Console engagement record
+        eng = None
+        if console_engagement_id:
+            console_eng = await db.get_engagement(console_engagement_id)
+            if console_eng:
+                acq = console_eng.get("acquirer_entity_id")
+                tgt = console_eng.get("target_entity_id")
+
+                url = f"{convergence_url}/api/convergence/engagements"
+                try:
+                    resp = await client.get(url, headers=_json_headers())
+                except (httpx.ConnectError, httpx.TimeoutException) as e:
+                    logger.error(
+                        f"[PIPELINE] ME pre-flight — Convergence "
+                        f"unreachable: {e}")
+                    return False
+
+                if resp.status_code != 200:
+                    logger.error(
+                        f"[PIPELINE] ME pre-flight — Convergence "
+                        f"engagements returned {resp.status_code}")
+                    return False
+
+                engs = resp.json()
+                if isinstance(engs, dict):
+                    engs = engs.get("engagements", [])
+
+                # Match by entity pair
+                for e in engs:
+                    if (e.get("acquirer_entity_id") == acq
+                            and e.get("target_entity_id") == tgt):
+                        eng = e
+                        break
+
+                # Store link for future runs
+                if eng and console_engagement_id:
+                    await db.link_convergence_engagement(
+                        console_engagement_id,
+                        str(eng["engagement_id"]),
+                        eng.get("short_name", ""),
+                    )
+
+        if not eng:
+            logger.error(
+                "[PIPELINE] ME pre-flight — no matching engagement found "
+                "in Convergence")
+            return False
+
+    # Populate context from Convergence engagement
+    context["convergence_engagement_id"] = str(eng["engagement_id"])
+    short_name = eng.get("short_name") or eng.get("engagement_short_name", "")
+    context["engagement_short_name"] = short_name
+
+    acq_entity = eng.get("acquirer_entity_id", "")
+    tgt_entity = eng.get("target_entity_id", "")
+
+    # tenant_id: Convergence engagement > Console engagement > env
+    tenant_id = eng.get("tenant_id")
+    if not tenant_id and console_engagement_id:
+        console_eng = await db.get_engagement(console_engagement_id)
+        if console_eng:
+            tenant_id = console_eng.get("tenant_id")
+    if not tenant_id:
+        tenant_id = config.AOS_TENANT_ID
+    context["tenant_id"] = tenant_id
+
+    # Set per-entity Farm configs so farm_financials_a/b get correct entity_id
+    job.config["farm_config_a"] = {
+        **cfg.get("farm_config_a", {}),
+        "entity_id": acq_entity,
+    }
+    job.config["farm_config_b"] = {
+        **cfg.get("farm_config_b", {}),
+        "entity_id": tgt_entity,
+    }
+
+    # Persist Convergence identity in job.config for step-mode context rebuild
+    job.config["convergence_engagement_id"] = context[
+        "convergence_engagement_id"]
+    job.config["engagement_short_name"] = short_name
+
+    # Set run_name from engagement_short_name
+    _update_run_name(job, context)
+
+    logger.info(
+        f"[PIPELINE] ME pre-flight OK — engagement={eng['engagement_id']}, "
+        f"short_name={short_name}, acquirer={acq_entity}, "
+        f"target={tgt_entity}")
+    return True
+
+
 # ── Pipeline Execution Engine ────────────────────────────────────────
 
-async def run_pipeline_batch(job_id: str) -> None:
+async def run_pipeline_batch(pipeline_run_id: str) -> None:
     """Run all pipeline steps in sequence (batch mode).
 
     Parallel groups are executed concurrently via asyncio.gather.
     Stops on first failure (subsequent steps stay PENDING).
     Persists to Postgres on each step completion.
     """
-    job = PIPELINE_JOBS.get(job_id)
+    job = PIPELINE_JOBS.get(pipeline_run_id)
     if not job:
         return
 
     job.status = "running"
 
     async with httpx.AsyncClient(timeout=240.0) as client:
-        context: dict[str, Any] = {}
+        context: dict[str, Any] = {
+            "pipeline_run_id": pipeline_run_id,
+        }
 
         # Resolve tenant identity — SE and ME have different models.
         cfg = job.config
-        _engagement_id = cfg.get("engagement_id")
 
-        if job.pipeline_mode == "se":
+        if job.pipeline_mode == PipelineMode.SE:
             # SE: Farm generates fresh identity (entity_id) each run.
-            # tenant_id comes from Console's env — AOD requires it on discovery requests.
+            # tenant_id comes from Console's env — AOD requires it.
             context["tenant_id"] = config.AOS_TENANT_ID
         else:
-            # ME: entity_id comes from engagement record (meridian/cascadia).
-            _entity_id = cfg.get("entity_id")
-            if not _entity_id and cfg.get("entities"):
-                _entity_id = cfg["entities"][0]
-            if _engagement_id:
-                _eng = await db.get_engagement(_engagement_id)
-                if _eng and _eng.get("tenant_id"):
-                    context["tenant_id"] = _eng["tenant_id"]
-            if "tenant_id" not in context:
-                context["tenant_id"] = cfg.get("tenant_id") or config.AOS_TENANT_ID
-            if _entity_id:
-                context["entity_id"] = _entity_id
-            if cfg.get("entity_name"):
-                context["entity_name"] = cfg["entity_name"]
+            # ── ME pre-flight ──────────────────────────────────────
+            # Fetch engagement from Convergence API to get canonical
+            # engagement_id, engagement_short_name, and entity pair.
+            preflight_ok = await _me_preflight(
+                client, job, context, cfg)
+            if not preflight_ok:
+                # Pre-flight failed — mark pipeline as failed
+                job.status = "completed_with_errors"
+                job.message = ("ME pre-flight failed — could not resolve "
+                               "engagement from Convergence")
+                job.completed_at = _now()
+                await _persist_job(job)
+                return
 
         i = 0
         while i < len(job.steps):
@@ -855,30 +1206,59 @@ async def run_pipeline_batch(job_id: str) -> None:
 
 def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
     """Rebuild pipeline context from completed step data."""
-    context: dict[str, Any] = {}
+    context: dict[str, Any] = {
+        "pipeline_run_id": job.pipeline_run_id,
+    }
     # Carry identity from job config first (set at pipeline start from registry)
     cfg = job.config
     for key in ("tenant_id", "entity_id", "entity_name"):
         if cfg.get(key):
             context[key] = cfg[key]
+
+    # ME identity from config (set by pre-flight, persisted in job.config)
+    if cfg.get("convergence_engagement_id"):
+        context["convergence_engagement_id"] = cfg["convergence_engagement_id"]
+    if cfg.get("engagement_short_name"):
+        context["engagement_short_name"] = cfg["engagement_short_name"]
+
     for s in job.steps:
         if s.data and s.status == StepStatus.SUCCESS:
-            if "snapshot_id" in s.data:
-                context["snapshot_id"] = s.data["snapshot_id"]
+            # Capture namespaced IDs from step data
+            if "farm_manifest_id" in s.data:
+                context["farm_manifest_id"] = s.data["farm_manifest_id"]
+            elif "snapshot_id" in s.data:
+                context["farm_manifest_id"] = s.data["snapshot_id"]
             if "tenant_id" in s.data:
                 context["tenant_id"] = s.data["tenant_id"]
             if "entity_id" in s.data:
                 context["entity_id"] = s.data["entity_id"]
-            if "run_id" in s.data:
-                context["run_id"] = s.data["run_id"]
-        if s.provenance_tag:
-            context["provenance_tag"] = s.provenance_tag
+            if "aod_discovery_id" in s.data:
+                context["aod_discovery_id"] = s.data["aod_discovery_id"]
+            elif "run_id" in s.data:
+                context["aod_discovery_id"] = s.data["run_id"]
+            if "handoff_id" in s.data:
+                context["handoff_id"] = s.data["handoff_id"]
+            if "aam_inference_id" in s.data:
+                context["aam_inference_id"] = s.data["aam_inference_id"]
+            if "dcl_ingest_id" in s.data:
+                context.setdefault("dcl_ingest_ids", []).append(
+                    s.data["dcl_ingest_id"])
+            # ME per-entity dcl_ingest_ids
+            if s.name == "farm_financials_a" and "dcl_ingest_id" in (s.data or {}):
+                context["dcl_ingest_id_a"] = s.data["dcl_ingest_id"]
+            if s.name == "farm_financials_b" and "dcl_ingest_id" in (s.data or {}):
+                context["dcl_ingest_id_b"] = s.data["dcl_ingest_id"]
+            # COFA output
+            if "cofa_run_id" in s.data:
+                context["cofa_run_id"] = s.data["cofa_run_id"]
+            if "verify_id" in s.data:
+                context["verify_id"] = s.data["verify_id"]
     return context
 
 
-async def run_single_step(job_id: str, step_indices: list[int]) -> None:
+async def run_single_step(pipeline_run_id: str, step_indices: list[int]) -> None:
     """Run specific step(s) for step-by-step mode."""
-    job = PIPELINE_JOBS.get(job_id)
+    job = PIPELINE_JOBS.get(pipeline_run_id)
     if not job:
         return
 
@@ -943,4 +1323,6 @@ async def _persist_job(job: PipelineJob) -> None:
     try:
         await db.save_pipeline_job(job)
     except Exception as exc:
-        logger.error(f"[PIPELINE] Failed to persist job {job.job_id}: {exc}")
+        logger.error(
+            f"[PIPELINE] Failed to persist job {job.pipeline_run_id}: {exc}"
+        )

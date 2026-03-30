@@ -16,6 +16,7 @@ FARM_BASE_URL: str = os.environ.get("FARM_BASE_URL", "http://localhost:8003").rs
 DCL_BASE_URL: str = os.environ.get("DCL_BASE_URL", "http://localhost:8004").rstrip("/")
 NLQ_BASE_URL: str = os.environ.get("NLQ_BASE_URL", "http://localhost:8005").rstrip("/")
 PLATFORM_BASE_URL: str = os.environ.get("PLATFORM_BASE_URL", "http://localhost:8006").rstrip("/")
+CONVERGENCE_BASE_URL: str = os.environ.get("CONVERGENCE_BASE_URL", "http://localhost:8010").rstrip("/")
 
 # API Keys
 AOD_API_KEY: str = os.environ.get("AOD_API_KEY", "")

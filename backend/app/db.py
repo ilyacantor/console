@@ -108,6 +108,15 @@ async def _ensure_schema() -> None:
             ALTER TABLE console.engagements
             ADD COLUMN IF NOT EXISTS target_entity_id VARCHAR(100)
         """)
+        # Convergence canonical engagement identity (Prompt 6)
+        await conn.execute("""
+            ALTER TABLE console.engagements
+            ADD COLUMN IF NOT EXISTS convergence_engagement_id UUID
+        """)
+        await conn.execute("""
+            ALTER TABLE console.engagements
+            ADD COLUMN IF NOT EXISTS engagement_short_name VARCHAR(50)
+        """)
         # Backfill acquirer/target from legacy entity_ids array if present
         try:
             await conn.execute("""
@@ -204,9 +213,22 @@ async def _ensure_schema() -> None:
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        # Migrate pipeline_jobs: old schema had job_id VARCHAR(20), new uses pipeline_run_id UUID
+        old_pipeline_schema = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'console'
+                  AND table_name = 'pipeline_jobs'
+                  AND column_name = 'job_id'
+            )
+        """)
+        if old_pipeline_schema:
+            await conn.execute("DROP TABLE console.pipeline_jobs")
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS console.pipeline_jobs (
-                job_id VARCHAR(20) PRIMARY KEY,
+                pipeline_run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                run_name TEXT,
                 pipeline_mode VARCHAR(10) NOT NULL,
                 execution_mode VARCHAR(10) NOT NULL,
                 status VARCHAR(30) NOT NULL,
@@ -220,14 +242,26 @@ async def _ensure_schema() -> None:
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+
+        # Migrate recon_history: old schema had job_id TEXT, new uses pipeline_run_id UUID
+        old_recon_schema = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'console'
+                  AND table_name = 'recon_history'
+                  AND column_name = 'job_id'
+            )
+        """)
+        if old_recon_schema:
+            await conn.execute("DROP TABLE console.recon_history")
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS console.recon_history (
                 id SERIAL PRIMARY KEY,
-                job_id TEXT NOT NULL,
+                pipeline_run_id UUID NOT NULL,
                 pipeline_mode TEXT NOT NULL,
                 entity_id TEXT,
-                run_id TEXT,
-                provenance_tag TEXT,
+                run_name TEXT,
                 overall TEXT NOT NULL,
                 checks JSONB NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT NOW()
@@ -436,7 +470,7 @@ async def get_runs(limit: int = 20) -> list[dict[str, Any]]:
         )
         return [
             {
-                "run_id": str(r["run_id"]),
+                "pipeline_run_id": str(r["run_id"]),
                 "mode": r["mode"],
                 "entity_ids": r["entity_ids"],
                 "steps": json.loads(r["steps"]),
@@ -467,7 +501,7 @@ async def get_run(run_id: str) -> dict[str, Any] | None:
         if not r:
             return None
         return {
-            "run_id": str(r["run_id"]),
+            "pipeline_run_id": str(r["run_id"]),
             "mode": r["mode"],
             "entity_ids": r["entity_ids"],
             "steps": json.loads(r["steps"]),
@@ -551,7 +585,8 @@ async def get_engagements() -> list[dict[str, Any]]:
             """
             SELECT engagement_id, acquirer_entity_id, target_entity_id,
                    tenant_id, engagement_type, lifecycle_stage,
-                   state_json, created_at, updated_at
+                   state_json, created_at, updated_at,
+                   convergence_engagement_id, engagement_short_name
             FROM console.engagements
             ORDER BY created_at DESC
             """
@@ -569,7 +604,8 @@ async def get_engagement(engagement_id: str) -> dict[str, Any] | None:
             """
             SELECT engagement_id, acquirer_entity_id, target_entity_id,
                    tenant_id, engagement_type, lifecycle_stage,
-                   state_json, created_at, updated_at
+                   state_json, created_at, updated_at,
+                   convergence_engagement_id, engagement_short_name
             FROM console.engagements
             WHERE engagement_id = $1::uuid
             """,
@@ -613,6 +649,34 @@ async def update_engagement(
             )
 
 
+async def link_convergence_engagement(
+    engagement_id: str,
+    convergence_engagement_id: str,
+    engagement_short_name: str,
+) -> None:
+    """Store canonical Convergence engagement identity on a Console engagement."""
+    if not _pool:
+        logger.error(
+            f"Cannot link Convergence engagement — database not available. "
+            f"console_id={engagement_id}"
+        )
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE console.engagements
+            SET convergence_engagement_id = $2::uuid,
+                engagement_short_name = $3,
+                updated_at = NOW()
+            WHERE engagement_id = $1::uuid
+            """,
+            engagement_id,
+            convergence_engagement_id,
+            engagement_short_name,
+        )
+
+
 def _engagement_row_to_dict(r: Any) -> dict[str, Any]:
     return {
         "engagement_id": str(r["engagement_id"]),
@@ -624,6 +688,8 @@ def _engagement_row_to_dict(r: Any) -> dict[str, Any]:
         "state_json": json.loads(r["state_json"]) if isinstance(r["state_json"], str) else r["state_json"],
         "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+        "convergence_engagement_id": str(r["convergence_engagement_id"]) if r.get("convergence_engagement_id") else None,
+        "engagement_short_name": r.get("engagement_short_name"),
     }
 
 
@@ -1088,7 +1154,7 @@ async def get_maestra_runs(
         )
         return [
             {
-                "run_id": str(r["run_id"]),
+                "maestra_run_id": str(r["run_id"]),
                 "engagement_id": str(r["engagement_id"]) if r["engagement_id"] else None,
                 "step_name": r["step_name"],
                 "run_tag": r["run_tag"],
@@ -1302,7 +1368,7 @@ async def save_pipeline_job(job) -> None:
     if not _pool:
         logger.error(
             f"Cannot save pipeline job — database not available. "
-            f"job_id={job.job_id}"
+            f"pipeline_run_id={job.pipeline_run_id}"
         )
         return
 
@@ -1310,18 +1376,21 @@ async def save_pipeline_job(job) -> None:
         await conn.execute(
             """
             INSERT INTO console.pipeline_jobs
-                (job_id, pipeline_mode, execution_mode, status, started_at,
-                 completed_at, steps, current_step, total_steps, message, config)
-            VALUES ($1, $2, $3, $4, $5::timestamptz, $6::timestamptz,
-                    $7::jsonb, $8, $9, $10, $11::jsonb)
-            ON CONFLICT (job_id) DO UPDATE
-                SET status = EXCLUDED.status,
+                (pipeline_run_id, run_name, pipeline_mode, execution_mode,
+                 status, started_at, completed_at, steps, current_step,
+                 total_steps, message, config)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz,
+                    $8::jsonb, $9, $10, $11, $12::jsonb)
+            ON CONFLICT (pipeline_run_id) DO UPDATE
+                SET run_name = EXCLUDED.run_name,
+                    status = EXCLUDED.status,
                     completed_at = EXCLUDED.completed_at,
                     steps = EXCLUDED.steps,
                     current_step = EXCLUDED.current_step,
                     message = EXCLUDED.message
             """,
-            job.job_id,
+            job.pipeline_run_id,
+            job.run_name,
             job.pipeline_mode.value if hasattr(job.pipeline_mode, 'value') else job.pipeline_mode,
             job.execution_mode.value if hasattr(job.execution_mode, 'value') else job.execution_mode,
             job.status,
@@ -1343,8 +1412,8 @@ async def get_pipeline_jobs(limit: int = 20) -> list[dict[str, Any]]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT job_id, pipeline_mode, execution_mode, status,
-                   started_at, completed_at, steps, current_step,
+            SELECT pipeline_run_id, run_name, pipeline_mode, execution_mode,
+                   status, started_at, completed_at, steps, current_step,
                    total_steps, message, config, created_at
             FROM console.pipeline_jobs
             ORDER BY created_at DESC
@@ -1354,7 +1423,8 @@ async def get_pipeline_jobs(limit: int = 20) -> list[dict[str, Any]]:
         )
         return [
             {
-                "job_id": r["job_id"],
+                "pipeline_run_id": str(r["pipeline_run_id"]),
+                "run_name": r["run_name"],
                 "pipeline_mode": r["pipeline_mode"],
                 "execution_mode": r["execution_mode"],
                 "status": r["status"],
@@ -1371,26 +1441,27 @@ async def get_pipeline_jobs(limit: int = 20) -> list[dict[str, Any]]:
         ]
 
 
-async def get_pipeline_job(job_id: str) -> dict[str, Any] | None:
-    """Fetch a single pipeline job by ID."""
+async def get_pipeline_job(pipeline_run_id: str) -> dict[str, Any] | None:
+    """Fetch a single pipeline job by pipeline_run_id."""
     if not _pool:
         return None
 
     async with _pool.acquire() as conn:
         r = await conn.fetchrow(
             """
-            SELECT job_id, pipeline_mode, execution_mode, status,
-                   started_at, completed_at, steps, current_step,
+            SELECT pipeline_run_id, run_name, pipeline_mode, execution_mode,
+                   status, started_at, completed_at, steps, current_step,
                    total_steps, message, config, created_at
             FROM console.pipeline_jobs
-            WHERE job_id = $1
+            WHERE pipeline_run_id = $1::uuid
             """,
-            job_id,
+            pipeline_run_id,
         )
         if not r:
             return None
         return {
-            "job_id": r["job_id"],
+            "pipeline_run_id": str(r["pipeline_run_id"]),
+            "run_name": r["run_name"],
             "pipeline_mode": r["pipeline_mode"],
             "execution_mode": r["execution_mode"],
             "status": r["status"],
@@ -1409,29 +1480,31 @@ async def get_pipeline_job(job_id: str) -> dict[str, Any] | None:
 
 
 async def save_recon(
-    job_id: str,
+    pipeline_run_id: str,
     pipeline_mode: str,
     entity_id: str | None,
-    run_id: str | None,
-    provenance_tag: str | None,
+    run_name: str | None,
     overall: str,
     checks: list,
 ) -> int | None:
     """Write a recon snapshot to recon_history. Returns the row id."""
     if not _pool:
-        logger.error(f"Cannot save recon — database not available. job_id={job_id}")
+        logger.error(
+            f"Cannot save recon — database not available. "
+            f"pipeline_run_id={pipeline_run_id}"
+        )
         return None
 
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO console.recon_history
-                (job_id, pipeline_mode, entity_id, run_id, provenance_tag, overall, checks)
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                (pipeline_run_id, pipeline_mode, entity_id, run_name, overall, checks)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb)
             RETURNING id
             """,
-            job_id, pipeline_mode, entity_id, run_id,
-            provenance_tag, overall, json.dumps(checks),
+            pipeline_run_id, pipeline_mode, entity_id, run_name,
+            overall, json.dumps(checks),
         )
         return row["id"] if row else None
 
@@ -1444,7 +1517,7 @@ async def get_recon_history(limit: int = 20) -> list[dict[str, Any]]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, job_id, entity_id, provenance_tag, overall, created_at
+            SELECT id, pipeline_run_id, entity_id, run_name, overall, created_at
             FROM console.recon_history
             ORDER BY created_at DESC
             LIMIT $1
@@ -1454,9 +1527,9 @@ async def get_recon_history(limit: int = 20) -> list[dict[str, Any]]:
         return [
             {
                 "id": r["id"],
-                "job_id": r["job_id"],
+                "pipeline_run_id": str(r["pipeline_run_id"]),
                 "entity_id": r["entity_id"],
-                "provenance_tag": r["provenance_tag"],
+                "run_name": r["run_name"],
                 "overall": r["overall"],
                 "created_at": r["created_at"].isoformat() if r["created_at"] else None,
             }
@@ -1472,8 +1545,8 @@ async def get_recon_snapshot(history_id: int) -> dict[str, Any] | None:
     async with _pool.acquire() as conn:
         r = await conn.fetchrow(
             """
-            SELECT id, job_id, pipeline_mode, entity_id, run_id,
-                   provenance_tag, overall, checks, created_at
+            SELECT id, pipeline_run_id, pipeline_mode, entity_id,
+                   run_name, overall, checks, created_at
             FROM console.recon_history
             WHERE id = $1
             """,
@@ -1483,11 +1556,10 @@ async def get_recon_snapshot(history_id: int) -> dict[str, Any] | None:
             return None
         return {
             "history_id": r["id"],
-            "job_id": r["job_id"],
+            "pipeline_run_id": str(r["pipeline_run_id"]),
             "pipeline_mode": r["pipeline_mode"],
             "entity_id": r["entity_id"],
-            "run_id": r["run_id"],
-            "provenance_tag": r["provenance_tag"],
+            "run_name": r["run_name"],
             "overall": r["overall"],
             "checks": json.loads(r["checks"]) if isinstance(r["checks"], str) else r["checks"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,

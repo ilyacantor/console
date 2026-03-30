@@ -231,7 +231,7 @@ export default function Engagements() {
                   borderLeft: e.engagement_id === activeEngagement?.engagement_id ? '3px solid #3B82F6' : '3px solid transparent',
                 }}
               >
-                <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '11px', color: 'var(--text-muted)' }}>{e.engagement_id.slice(0, 8)}</td>
+                <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '11px', color: 'var(--text-muted)' }} title={e.engagement_id}>{e.engagement_short_name || e.engagement_id}</td>
                 <td style={{ padding: '8px', color: 'var(--text-primary)' }}>{e.acquirer_entity_id}</td>
                 <td style={{ padding: '8px', color: 'var(--text-primary)' }}>{e.target_entity_id}</td>
                 <td style={{ padding: '8px' }}><TypePill type={e.engagement_type} /></td>
