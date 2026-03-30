@@ -15,7 +15,7 @@ from backend.app.models.pipeline import (
     StepStatus,
 )
 from backend.app.services import pipeline_orchestrator
-from backend.app.services.pipeline_orchestrator import PIPELINE_JOBS, logical_step_count
+from backend.app.services.pipeline_orchestrator import PIPELINE_JOBS
 
 import httpx
 
@@ -40,10 +40,7 @@ async def start_pipeline(req: StartPipelineRequest, background_tasks: Background
              if req.mode == PipelineMode.SE
              else pipeline_orchestrator.create_me_steps())
 
-    # ME: use logical step count (parallel groups = 1 step)
-    total = (logical_step_count(steps)
-             if req.mode == PipelineMode.ME
-             else len(steps))
+    total = len(steps)
 
     job = PipelineJob(
         pipeline_run_id=pipeline_run_id,
@@ -159,9 +156,7 @@ async def run_pipeline_legacy(req: dict):
              if mode == PipelineMode.SE
              else pipeline_orchestrator.create_me_steps())
 
-    total = (logical_step_count(steps)
-             if mode == PipelineMode.ME
-             else len(steps))
+    total = len(steps)
 
     job = PipelineJob(
         pipeline_run_id=pipeline_run_id,

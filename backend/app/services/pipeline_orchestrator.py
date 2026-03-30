@@ -378,8 +378,8 @@ async def _step_aod_discovery(
 
     if resp.status_code == 200:
         data = resp.json()
-        # Capture namespaced ID from AOD
-        aod_discovery_id = data.get("aod_discovery_id") or data.get("run_id")
+        # Capture namespaced ID from AOD (I1: no bare run_id fallback)
+        aod_discovery_id = data.get("aod_discovery_id")
         if aod_discovery_id:
             context["aod_discovery_id"] = aod_discovery_id
         consumed = data.get("consumed_snapshot_id")
@@ -424,7 +424,8 @@ async def _step_aod_aam_handoff(
             f"{url}/api/handoff/aam/export",
             headers=_aod_headers(),
             params={
-                "run_id": aod_discovery_id,
+                "aod_discovery_id": aod_discovery_id,
+                "source_aod_discovery_id": aod_discovery_id,
                 "status_filter": "all",
                 **({"tenant_id": tenant_id} if tenant_id else {}),
                 **({"entity_id": entity_id} if entity_id else {}),
@@ -565,6 +566,9 @@ async def _step_farm_financials(
                    start_time=t0)
         return
 
+    # ME mode pushes to Convergence; SE mode pushes to DCL
+    is_me = config_key in ("farm_config_a", "farm_config_b")
+
     body: dict[str, Any] = {
         "source": {
             "pipe_id": pipe_id,
@@ -579,12 +583,24 @@ async def _step_farm_financials(
         },
     }
 
+    if is_me:
+        convergence_url = _require_url(
+            "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL,
+            step.display_name)
+        body["target"]["ingest_url"] = (
+            f"{convergence_url}/api/convergence/ingest-triples")
+        # Unique farm_manifest_id per entity so Farm generates unique ingest UUIDs
+        # (Farm derives triple_run_uuid via UUID5 from farm_manifest_id)
+        body["farm_manifest_id"] = str(uuid.uuid4())
+    else:
+        body["farm_manifest_id"] = pipeline_run_id
+
     # Pass farm_manifest_id if available (provenance link)
     if farm_manifest_id:
         body["farm_manifest_id"] = farm_manifest_id
 
-    # pipeline_run_id as the E2E correlation tag — replaces old triples_id
-    body["target"]["pipeline_run_id"] = pipeline_run_id
+    # Pipeline-level correlation ID for triple provenance tracking
+    body["target"]["triples_id"] = pipeline_run_id
 
     try:
         resp = await client.post(f"{url}/api/farm/manifest-intake",
@@ -621,8 +637,10 @@ async def _step_farm_financials(
         source_rows = data.get("source_rows") or rows
 
         # Capture dcl_ingest_id from response — per-entity tracking for ME
+        # Farm returns dcl_run_id; accept both names for compatibility
         dcl_ingest_id = (data.get("dcl_ingest_id")
-                         or push.get("dcl_ingest_id"))
+                         or push.get("dcl_ingest_id")
+                         or push.get("dcl_run_id"))
         if dcl_ingest_id:
             if config_key == "farm_config_a":
                 context["dcl_ingest_id_a"] = dcl_ingest_id
@@ -867,9 +885,9 @@ def _step_complete(
     succeeded = sum(1 for s in job.steps if s.status == StepStatus.SUCCESS)
     failed = sum(1 for s in job.steps if s.status == StepStatus.FAILED)
     skipped = sum(1 for s in job.steps if s.status == StepStatus.SKIPPED)
-    # Logical count excludes the complete step and treats parallel groups as 1
+    # Count all steps except the "complete" step itself
     steps_except_complete = [s for s in job.steps if s.name != "complete"]
-    total = logical_step_count(steps_except_complete)
+    total = len(steps_except_complete)
 
     elapsed_ms = 0
     for s in job.steps:
@@ -957,18 +975,17 @@ async def _me_preflight(
     job: PipelineJob,
     context: dict[str, Any],
     cfg: dict[str, Any],
-) -> bool:
+) -> None:
     """Fetch engagement from Convergence, populate context + per-entity configs.
 
-    Returns True on success, False on failure (caller aborts pipeline).
+    Raises RuntimeError on failure (caller catches and aborts pipeline).
     Sets: convergence_engagement_id, engagement_short_name, tenant_id,
           farm_config_a.entity_id, farm_config_b.entity_id, run_name.
     """
     convergence_url = config.CONVERGENCE_BASE_URL
     if not convergence_url:
-        logger.error("[PIPELINE] CONVERGENCE_BASE_URL not configured — "
-                     "cannot run ME pre-flight")
-        return False
+        raise RuntimeError(
+            "ME pre-flight — CONVERGENCE_BASE_URL not configured")
 
     convergence_url = convergence_url.rstrip("/")
 
@@ -985,20 +1002,17 @@ async def _me_preflight(
         try:
             resp = await client.get(url, headers=_json_headers())
         except httpx.ConnectError:
-            logger.error(
-                f"[PIPELINE] ME pre-flight — Could not reach Convergence "
+            raise RuntimeError(
+                f"ME pre-flight — Could not reach Convergence "
                 f"at {url} — connection refused")
-            return False
         except httpx.TimeoutException:
-            logger.error(
-                f"[PIPELINE] ME pre-flight — Convergence timed out at {url}")
-            return False
+            raise RuntimeError(
+                f"ME pre-flight — Convergence timed out at {url}")
 
         if resp.status_code != 200:
-            logger.error(
-                f"[PIPELINE] ME pre-flight — Convergence returned "
+            raise RuntimeError(
+                f"ME pre-flight — Convergence returned "
                 f"{resp.status_code}: {_extract_error(resp)}")
-            return False
 
         eng = resp.json()
     else:
@@ -1015,16 +1029,14 @@ async def _me_preflight(
                 try:
                     resp = await client.get(url, headers=_json_headers())
                 except (httpx.ConnectError, httpx.TimeoutException) as e:
-                    logger.error(
-                        f"[PIPELINE] ME pre-flight — Convergence "
-                        f"unreachable: {e}")
-                    return False
+                    raise RuntimeError(
+                        f"ME pre-flight — Convergence unreachable: {e}"
+                    ) from e
 
                 if resp.status_code != 200:
-                    logger.error(
-                        f"[PIPELINE] ME pre-flight — Convergence "
-                        f"engagements returned {resp.status_code}")
-                    return False
+                    raise RuntimeError(
+                        f"ME pre-flight — Convergence engagements "
+                        f"returned {resp.status_code}")
 
                 engs = resp.json()
                 if isinstance(engs, dict):
@@ -1046,10 +1058,8 @@ async def _me_preflight(
                     )
 
         if not eng:
-            logger.error(
-                "[PIPELINE] ME pre-flight — no matching engagement found "
-                "in Convergence")
-            return False
+            raise RuntimeError(
+                "ME pre-flight — no matching engagement found in Convergence")
 
     # Populate context from Convergence engagement
     context["convergence_engagement_id"] = str(eng["engagement_id"])
@@ -1091,7 +1101,6 @@ async def _me_preflight(
         f"[PIPELINE] ME pre-flight OK — engagement={eng['engagement_id']}, "
         f"short_name={short_name}, acquirer={acq_entity}, "
         f"target={tgt_entity}")
-    return True
 
 
 # ── Pipeline Execution Engine ────────────────────────────────────────
@@ -1125,13 +1134,12 @@ async def run_pipeline_batch(pipeline_run_id: str) -> None:
             # ── ME pre-flight ──────────────────────────────────────
             # Fetch engagement from Convergence API to get canonical
             # engagement_id, engagement_short_name, and entity pair.
-            preflight_ok = await _me_preflight(
-                client, job, context, cfg)
-            if not preflight_ok:
-                # Pre-flight failed — mark pipeline as failed
+            try:
+                await _me_preflight(client, job, context, cfg)
+            except RuntimeError as e:
+                logger.error(f"[PIPELINE] {e}")
                 job.status = "completed_with_errors"
-                job.message = ("ME pre-flight failed — could not resolve "
-                               "engagement from Convergence")
+                job.message = str(e)
                 job.completed_at = _now()
                 await _persist_job(job)
                 return
@@ -1234,20 +1242,23 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
                 context["entity_id"] = s.data["entity_id"]
             if "aod_discovery_id" in s.data:
                 context["aod_discovery_id"] = s.data["aod_discovery_id"]
-            elif "run_id" in s.data:
-                context["aod_discovery_id"] = s.data["run_id"]
             if "handoff_id" in s.data:
                 context["handoff_id"] = s.data["handoff_id"]
             if "aam_inference_id" in s.data:
                 context["aam_inference_id"] = s.data["aam_inference_id"]
-            if "dcl_ingest_id" in s.data:
-                context.setdefault("dcl_ingest_ids", []).append(
-                    s.data["dcl_ingest_id"])
+            # Farm returns dcl_run_id; accept both names
+            _dcl_id = s.data.get("dcl_ingest_id")
+            if not _dcl_id:
+                _push = s.data.get("push_result") or {}
+                _dcl_id = (_push.get("dcl_ingest_id")
+                           or _push.get("dcl_run_id"))
+            if _dcl_id:
+                context.setdefault("dcl_ingest_ids", []).append(_dcl_id)
             # ME per-entity dcl_ingest_ids
-            if s.name == "farm_financials_a" and "dcl_ingest_id" in (s.data or {}):
-                context["dcl_ingest_id_a"] = s.data["dcl_ingest_id"]
-            if s.name == "farm_financials_b" and "dcl_ingest_id" in (s.data or {}):
-                context["dcl_ingest_id_b"] = s.data["dcl_ingest_id"]
+            if s.name == "farm_financials_a" and _dcl_id:
+                context["dcl_ingest_id_a"] = _dcl_id
+            if s.name == "farm_financials_b" and _dcl_id:
+                context["dcl_ingest_id_b"] = _dcl_id
             # COFA output
             if "cofa_run_id" in s.data:
                 context["cofa_run_id"] = s.data["cofa_run_id"]

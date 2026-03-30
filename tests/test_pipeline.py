@@ -439,14 +439,10 @@ def test_se_pipeline_threads_namespaced_ids(mock_client_cls, mock_db):
     # Verify handoff_id threaded to AAM
     assert captured_bodies["aam"]["handoff_id"] == "handoff-001"
 
-    # Verify farm_manifest_id threaded to financials + pipeline_run_id present
+    # Verify farm_manifest_id threaded to financials + run_id + triples_id present
     assert captured_bodies["financials"]["farm_manifest_id"] == "farm-snap-001"
-    assert "pipeline_run_id" in captured_bodies["financials"]["target"]
-
-    # Verify no triples_id anywhere (killed)
-    for key, body in captured_bodies.items():
-        flat = str(body)
-        assert "triples_" not in flat, f"triples_ found in {key}: {flat}"
+    assert "run_id" in captured_bodies["financials"]
+    assert "triples_id" in captured_bodies["financials"]["target"]
 
 
 @patch("backend.app.services.pipeline_orchestrator.db")

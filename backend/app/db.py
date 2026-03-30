@@ -111,7 +111,12 @@ async def _ensure_schema() -> None:
         # Convergence canonical engagement identity (Prompt 6)
         await conn.execute("""
             ALTER TABLE console.engagements
-            ADD COLUMN IF NOT EXISTS convergence_engagement_id UUID
+            ADD COLUMN IF NOT EXISTS convergence_engagement_id TEXT
+        """)
+        # Migration: column was originally UUID; Platform IDs are strings
+        await conn.execute("""
+            ALTER TABLE console.engagements
+            ALTER COLUMN convergence_engagement_id TYPE TEXT
         """)
         await conn.execute("""
             ALTER TABLE console.engagements
@@ -310,8 +315,11 @@ async def _seed_config() -> None:
 
 
 async def _seed_engagements() -> None:
-    """Seed a default M&A engagement for Meridian + Cascadia."""
+    """Seed a default M&A engagement from SEED_*_ENTITY env vars."""
     if not _pool:
+        return
+    if not config.SEED_ACQUIRER_ENTITY or not config.SEED_TARGET_ENTITY:
+        logger.warning("[seed] SEED_ACQUIRER_ENTITY / SEED_TARGET_ENTITY not set — skipping engagement seed")
         return
 
     demo_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -346,8 +354,8 @@ async def _seed_engagements() -> None:
                 SET tenant_id = COALESCE(console.engagements.tenant_id, EXCLUDED.tenant_id)
             """,
             demo_id,
-            "meridian",
-            "cascadia",
+            config.SEED_ACQUIRER_ENTITY,
+            config.SEED_TARGET_ENTITY,
             tenant_id,
             "MA",
             "review",
@@ -363,8 +371,8 @@ async def _seed_engagements() -> None:
                 SET tenant_id = COALESCE(console.engagements.tenant_id, EXCLUDED.tenant_id)
             """,
             demo_id_2,
-            "meridian",
-            "techflow",
+            config.SEED_ACQUIRER_ENTITY,
+            config.SEED_SECONDARY_TARGET,
             tenant_id,
             "MA",
             "upload",
@@ -419,7 +427,7 @@ async def _seed_change_events() -> None:
 
 
 async def save_run(
-    run_id: str,
+    pipeline_run_id: str,
     mode: str,
     entity_ids: list[str],
     steps: list[dict],
@@ -431,7 +439,7 @@ async def save_run(
     if not _pool:
         logger.error(
             "Cannot save pipeline run — database not available. "
-            f"run_id={run_id}, mode={mode}, status={status}"
+            f"pipeline_run_id={pipeline_run_id}, mode={mode}, status={status}"
         )
         return
 
@@ -442,7 +450,7 @@ async def save_run(
                 (run_id, mode, entity_ids, steps, total_duration_s, total_triples, status)
             VALUES ($1::uuid, $2, $3, $4::jsonb, $5, $6, $7)
             """,
-            run_id,
+            pipeline_run_id,
             mode,
             entity_ids,
             json.dumps(steps),
@@ -666,7 +674,7 @@ async def link_convergence_engagement(
         await conn.execute(
             """
             UPDATE console.engagements
-            SET convergence_engagement_id = $2::uuid,
+            SET convergence_engagement_id = $2,
                 engagement_short_name = $3,
                 updated_at = NOW()
             WHERE engagement_id = $1::uuid

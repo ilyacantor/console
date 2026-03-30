@@ -24,6 +24,11 @@ AOD_API_KEY: str = os.environ.get("AOD_API_KEY", "")
 # Tenant
 AOS_TENANT_ID: str = os.environ.get("AOS_TENANT_ID") or os.environ.get("AOS_DEV_TENANT_ID", "")
 
+# Seed entities — from .env, not hardcoded in application code (F1 guard)
+SEED_ACQUIRER_ENTITY: str = os.environ.get("SEED_ACQUIRER_ENTITY", "")
+SEED_TARGET_ENTITY: str = os.environ.get("SEED_TARGET_ENTITY", "")
+SEED_SECONDARY_TARGET: str = os.environ.get("SEED_SECONDARY_TARGET", "")
+
 # CORS
 CORS_ORIGINS: list[str] = [
     o.strip()
