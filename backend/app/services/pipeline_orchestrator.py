@@ -767,8 +767,8 @@ async def run_pipeline_batch(job_id: str) -> None:
 
         if job.pipeline_mode == "se":
             # SE: Farm generates fresh identity (entity_id) each run.
-            # AOS_TENANT_ID enters the pipeline at the DCL write boundary only.
-            pass
+            # tenant_id comes from Console's env — AOD requires it on discovery requests.
+            context["tenant_id"] = config.AOS_TENANT_ID
         else:
             # ME: entity_id comes from engagement record (meridian/cascadia).
             _entity_id = cfg.get("entity_id")
