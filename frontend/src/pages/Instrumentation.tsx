@@ -107,7 +107,7 @@ export default function Instrumentation() {
           </thead>
           <tbody>
             {sorted.map((r) => (
-              <tr key={r.run_id} style={{ borderBottom: '0.5px solid var(--border)' }}>
+              <tr key={r.maestra_run_id} style={{ borderBottom: '0.5px solid var(--border)' }}>
                 <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>{r.step_name}</td>
                 <td style={{ padding: '6px 8px', fontFamily: 'monospace', color: 'var(--text-muted)', fontSize: '11px' }}>{r.run_tag}</td>
                 <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }}>{r.duration_s?.toFixed(1)}s</td>

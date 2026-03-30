@@ -11,7 +11,7 @@ client = TestClient(app)
 
 SAMPLE_RUNS = [
     {
-        "run_id": "run-001",
+        "maestra_run_id": "run-001",
         "engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         "step_name": "cofa-map",
         "run_tag": "cofa-run-001",
@@ -26,7 +26,7 @@ SAMPLE_RUNS = [
         "created_at": "2026-03-25T07:00:00+00:00",
     },
     {
-        "run_id": "run-002",
+        "maestra_run_id": "run-002",
         "engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         "step_name": "chat",
         "run_tag": "chat-001",
@@ -41,7 +41,7 @@ SAMPLE_RUNS = [
         "created_at": "2026-03-25T08:00:00+00:00",
     },
     {
-        "run_id": "run-003",
+        "maestra_run_id": "run-003",
         "engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         "step_name": "cofa-map",
         "run_tag": "cofa-run-002",

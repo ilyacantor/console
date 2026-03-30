@@ -115,17 +115,35 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
 
     async def mock_post(url, **kwargs):
         if "/api/farm/manifest-intake" in url:
-            return _farm_manifest_response()
-        if "/api/maestra/cofa-chat" in url:
-            return httpx.Response(200, json={"response": "COFA complete"})
+            resp = _farm_manifest_response()
+            # Inject dcl_ingest_id into Farm response (ME pipeline needs it
+            # to build dcl_ingest_ids context for COFA)
+            data = resp.json()
+            data["dcl_ingest_id"] = f"dcl-ingest-{hash(url) % 1000:03d}"
+            return httpx.Response(200, json=data)
+        if "/api/convergence/cofa/unify" in url:
+            return httpx.Response(200, json={
+                "cofa_run_id": "cofa-run-001",
+                "status": "ok",
+            })
+        if "/api/convergence/verify" in url:
+            return httpx.Response(200, json={
+                "verify_id": "verify-001",
+                "status": "passed",
+            })
         return httpx.Response(404, json={"detail": "not found"})
 
     async def mock_get(url, **kwargs):
         if "/api/dcl/triples/overview" in url:
             return _dcl_overview_response()
-        if "/api/maestra/engagements" in url:
+        if "/api/convergence/engagements/eng-conv-1" in url:
             return httpx.Response(200, json={
-                "engagements": [{"engagement_id": "eng-1", "state": "active"}]
+                "engagement_id": "eng-conv-1",
+                "short_name": "MerCas",
+                "acquirer_entity_id": "test-entity-a",
+                "target_entity_id": "test-entity-b",
+                "tenant_id": "test-tenant",
+                "state": "active",
             })
         return httpx.Response(404, json={"detail": "not found"})
 
@@ -142,6 +160,7 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
     resp = client.post("/api/pipeline/run", json={
         "mode": "ME",
         "entities": ["test-entity-a", "test-entity-b"],
+        "config": {"convergence_engagement_id": "eng-conv-1"},
     })
     assert resp.status_code == 200
     data = resp.json()
@@ -155,8 +174,8 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
 
     assert data["steps"][0]["name"] == "farm_financials_a"
     assert data["steps"][1]["name"] == "farm_financials_b"
-    assert data["steps"][2]["name"] == "dcl_ingest"
-    assert data["steps"][3]["name"] == "cofa_unification"
+    assert data["steps"][2]["name"] == "cofa_unification"
+    assert data["steps"][3]["name"] == "verify"
     assert data["steps"][4]["name"] == "complete"
 
     for step in data["steps"]:
@@ -172,7 +191,10 @@ def test_me_pipeline_uses_convergence_engagement(mock_client_cls, mock_db):
 
     async def mock_post(url, **kwargs):
         if "/api/farm/manifest-intake" in url:
-            return _farm_manifest_response()
+            resp = _farm_manifest_response()
+            data = resp.json()
+            data["dcl_ingest_id"] = f"dcl-ingest-{hash(url) % 1000:03d}"
+            return httpx.Response(200, json=data)
         if "/api/convergence/cofa/unify" in url:
             cofa_bodies.append(kwargs.get("json", {}))
             return httpx.Response(200, json={
@@ -429,25 +451,36 @@ def test_se_pipeline_threads_namespaced_ids(mock_client_cls, mock_db):
 
 @patch("backend.app.services.pipeline_orchestrator.db")
 @patch("backend.app.services.pipeline_orchestrator.httpx.AsyncClient")
-def test_cofa_session_uses_pipeline_run_id(mock_client_cls, mock_db):
-    """COFA session_id uses full pipeline_run_id, not truncated job_id."""
+def test_cofa_sends_pipeline_run_id_to_convergence(mock_client_cls, mock_db):
+    """COFA unify request to Convergence includes full pipeline_run_id (not truncated)."""
 
     cofa_bodies = []
 
     async def mock_post(url, **kwargs):
         if "/api/farm/manifest-intake" in url:
-            return _farm_manifest_response()
-        if "/api/maestra/cofa-chat" in url:
+            resp = _farm_manifest_response()
+            data = resp.json()
+            data["dcl_ingest_id"] = f"dcl-ingest-{hash(url) % 1000:03d}"
+            return httpx.Response(200, json=data)
+        if "/api/convergence/cofa/unify" in url:
             cofa_bodies.append(kwargs.get("json", {}))
-            return httpx.Response(200, json={"response": "COFA complete"})
+            return httpx.Response(200, json={
+                "cofa_run_id": "cofa-run-001",
+                "consumed_dcl_ingest_ids": [],
+            })
+        if "/api/convergence/verify" in url:
+            return httpx.Response(200, json={"verify_id": "verify-001"})
         return httpx.Response(404, json={"detail": "not found"})
 
     async def mock_get(url, **kwargs):
-        if "/api/dcl/triples/overview" in url:
-            return _dcl_overview_response()
-        if "/api/maestra/engagements" in url:
+        if "/api/convergence/engagements/eng-conv-1" in url:
             return httpx.Response(200, json={
-                "engagements": [{"engagement_id": "eng-1", "state": "active"}]
+                "engagement_id": "eng-conv-1",
+                "short_name": "TstAB",
+                "acquirer_entity_id": "test-entity-a",
+                "target_entity_id": "test-entity-b",
+                "tenant_id": "test-tenant",
+                "state": "active",
             })
         return httpx.Response(404, json={"detail": "not found"})
 
@@ -458,14 +491,15 @@ def test_cofa_session_uses_pipeline_run_id(mock_client_cls, mock_db):
     resp = client.post("/api/pipeline/run", json={
         "mode": "ME",
         "entities": ["test-entity-a", "test-entity-b"],
+        "config": {"convergence_engagement_id": "eng-conv-1"},
     })
     assert resp.status_code == 200
     data = resp.json()
 
     assert len(cofa_bodies) == 1
-    session_id = cofa_bodies[0]["session_id"]
     pipeline_run_id = data["pipeline_run_id"]
 
-    # session_id must contain the full pipeline_run_id, not a truncated version
-    assert session_id == f"operator-cofa-{pipeline_run_id}"
+    # COFA body must include full pipeline_run_id and engagement_id
+    assert cofa_bodies[0]["pipeline_run_id"] == pipeline_run_id
+    assert cofa_bodies[0]["engagement_id"] == "eng-conv-1"
     assert len(pipeline_run_id) == 36  # Full UUID

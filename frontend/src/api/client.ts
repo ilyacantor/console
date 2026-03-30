@@ -386,7 +386,7 @@ export function updateConfig(data: Record<string, unknown>): Promise<{ status: s
 
 // Instrumentation
 export interface MaestraRun {
-  run_id: string
+  maestra_run_id: string
   engagement_id: string | null
   step_name: string
   run_tag: string | null
