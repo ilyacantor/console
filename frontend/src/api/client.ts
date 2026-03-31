@@ -64,6 +64,7 @@ export interface PipelineJobData {
   total_steps: number
   message: string
   config: Record<string, unknown>
+  entity_ids?: string[]
   created_at?: string
 }
 

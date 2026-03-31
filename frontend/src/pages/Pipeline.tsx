@@ -882,13 +882,13 @@ export default function Pipeline() {
           {/* Footer */}
           <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px', color: '#6B7280' }}>
             <span data-testid="run-name-label" style={{ color: '#93C5FD', fontWeight: 500 }}>{jobData.run_name}</span>
-            {jobData.pipeline_mode === 'me' && jobData.config?.engagement_short_name && (
+            {jobData.pipeline_mode === 'me' && !!jobData.config?.engagement_short_name && (
               <>
                 <span>|</span>
                 <span data-testid="engagement-label">Engagement: {String(jobData.config.engagement_short_name)}</span>
               </>
             )}
-            {jobData.pipeline_mode === 'se' && jobData.config?.entity_id && (
+            {jobData.pipeline_mode === 'se' && !!jobData.config?.entity_id && (
               <>
                 <span>|</span>
                 <span data-testid="entity-id-label">Entity: {String(jobData.config.entity_id)}</span>
