@@ -589,8 +589,9 @@ async def _step_farm_financials(
             step.display_name)
         body["target"]["ingest_url"] = (
             f"{convergence_url}/api/convergence/ingest-triples")
-        # Unique farm_manifest_id per entity so Farm generates unique ingest UUIDs
-        # (Farm derives triple_run_uuid via UUID5 from farm_manifest_id)
+        # Per-entity farm_manifest_id for Farm provenance + ground truth.
+        # Farm uses triples_id (= pipeline_run_id) as the run_id written
+        # to convergence_triples, so both entity batches share one run_id.
         body["farm_manifest_id"] = str(uuid.uuid4())
     else:
         body["farm_manifest_id"] = pipeline_run_id

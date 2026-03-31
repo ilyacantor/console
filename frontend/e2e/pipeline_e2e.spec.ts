@@ -127,7 +127,7 @@ test.describe('Pipeline Farm Push Summary', () => {
     await expect(summary.getByText('Duration')).toBeVisible()
 
     // Volume should show a number followed by "triples"
-    await expect(summary.getByText(/\d.*triples/)).toBeVisible()
+    await expect(summary.locator('[data-testid="volume-metric"]')).toContainText(/\d.*triples/)
 
     // No "triples_" prefixed string anywhere in the summary
     const summaryText = await summary.textContent()

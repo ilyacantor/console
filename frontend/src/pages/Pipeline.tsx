@@ -369,7 +369,7 @@ function FarmPushSummary({ steps }: { steps: PipelineStepData[] }) {
         color: '#9CA3AF',
       }}
     >
-      <div>
+      <div data-testid="volume-metric">
         <span style={{ color: '#6B7280', marginRight: '6px' }}>Volume</span>
         {rowsGenerated != null ? (
           <>
