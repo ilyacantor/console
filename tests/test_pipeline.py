@@ -434,14 +434,13 @@ def test_se_pipeline_threads_namespaced_ids(mock_client_cls, mock_db):
     assert captured_bodies["discovery"]["entity_id"] == "test-entity"
 
     # Verify aod_discovery_id threaded to handoff
-    assert captured_bodies["handoff"]["run_id"] == "aod-disc-001"
+    assert captured_bodies["handoff"]["aod_discovery_id"] == "aod-disc-001"
 
     # Verify handoff_id threaded to AAM
     assert captured_bodies["aam"]["handoff_id"] == "handoff-001"
 
-    # Verify farm_manifest_id threaded to financials + run_id + triples_id present
+    # Verify farm_manifest_id threaded to financials + triples_id present
     assert captured_bodies["financials"]["farm_manifest_id"] == "farm-snap-001"
-    assert "run_id" in captured_bodies["financials"]
     assert "triples_id" in captured_bodies["financials"]["target"]
 
 
