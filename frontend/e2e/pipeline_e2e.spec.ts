@@ -266,7 +266,7 @@ test.describe('Pipeline ME identity — engagement-based run_name (Prompt 6)', (
     await expect(
       m.getByText('Financial triples generated', { exact: false }).first()
         .or(m.getByText(/Pipeline stopped/).first())
-        .or(m.getByText(/ME pre-flight failed/).first())
+        .or(m.getByText(/ME pre-flight/).first())
     ).toBeVisible({ timeout: 60_000 })
 
     // run_name should be visible

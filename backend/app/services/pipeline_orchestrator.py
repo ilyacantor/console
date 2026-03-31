@@ -223,9 +223,11 @@ async def _step_farm_snapshot(
     context: dict[str, Any],
     t0: float,
 ) -> None:
-    """SE Step 1: Create Farm snapshot.  Farm owns identity generation —
-    Console sends tenant_id only.  Farm returns farm_manifest_id and a fresh
-    entity_id each run which Console carries forward through the pipeline."""
+    """SE Step 1: Create Farm snapshot.  Farm owns snapshot identity generation
+    (fresh tenant_id + entity_id per snapshot).  Console captures Farm's identity
+    as provenance (farm_snapshot_tenant_id, farm_snapshot_entity_id) but does not
+    overwrite the canonical pipeline identity (context["tenant_id"], context["entity_id"])
+    which flows to DCL at the write boundary."""
     url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL, "Farm Snapshot")
     cfg = job.config
 
@@ -236,8 +238,6 @@ async def _step_farm_snapshot(
         body["seed"] = cfg["seed"]
     if cfg.get("enterprise_profile"):
         body["enterprise_profile"] = cfg["enterprise_profile"]
-    if context.get("tenant_id"):
-        body["tenant_id"] = context["tenant_id"]
 
     try:
         resp = await client.post(f"{url}/api/snapshots", json=body,
@@ -260,13 +260,15 @@ async def _step_farm_snapshot(
         farm_manifest_id = data.get("farm_manifest_id") or data.get("snapshot_id")
         if farm_manifest_id:
             context["farm_manifest_id"] = farm_manifest_id
-        # Farm generates entity_id — read it into context
-        if data.get("entity_id") and "entity_id" not in context:
-            context["entity_id"] = data["entity_id"]
-        if data.get("tenant_name") and "entity_name" not in context:
-            context["entity_name"] = data["tenant_name"]
+        # Farm generates its own internal identity per snapshot — store as
+        # provenance but do NOT overwrite the canonical pipeline identity
+        # (context["tenant_id"], context["entity_id"]) which flows to DCL.
+        if data.get("entity_id"):
+            context["farm_snapshot_entity_id"] = data["entity_id"]
+        if data.get("tenant_name"):
+            context.setdefault("entity_name", data["tenant_name"])
         if data.get("tenant_id"):
-            context["tenant_id"] = data["tenant_id"]
+            context["farm_snapshot_tenant_id"] = data["tenant_id"]
         # Update run_name now that entity_id is available
         _update_run_name(job, context)
         _mark_step(step, StepStatus.SUCCESS, "Snapshot ready",
@@ -302,12 +304,12 @@ async def _step_farm_snapshot(
                                         or data.get("snapshot_id"))
                     if farm_manifest_id:
                         context["farm_manifest_id"] = farm_manifest_id
-                    if result.get("entity_id") and "entity_id" not in context:
-                        context["entity_id"] = result["entity_id"]
-                    if result.get("tenant_name") and "entity_name" not in context:
-                        context["entity_name"] = result["tenant_name"]
+                    if result.get("entity_id"):
+                        context["farm_snapshot_entity_id"] = result["entity_id"]
+                    if result.get("tenant_name"):
+                        context.setdefault("entity_name", result["tenant_name"])
                     if result.get("tenant_id"):
-                        context["tenant_id"] = result["tenant_id"]
+                        context["farm_snapshot_tenant_id"] = result["tenant_id"]
                     _update_run_name(job, context)
                     _mark_step(step, StepStatus.SUCCESS, "Snapshot ready",
                                data=result, start_time=t0)
@@ -1128,9 +1130,26 @@ async def run_pipeline_batch(pipeline_run_id: str) -> None:
         cfg = job.config
 
         if job.pipeline_mode == PipelineMode.SE:
-            # SE: Farm generates fresh identity (entity_id) each run.
-            # tenant_id comes from Console's env — AOD requires it.
+            # SE: canonical tenant_id from env, entity_id from config or
+            # SEED_ACQUIRER_ENTITY.  These flow to DCL at the write boundary.
+            # Farm generates its own snapshot identity separately.
             context["tenant_id"] = config.AOS_TENANT_ID
+            se_entity = cfg.get("entity_id") or config.SEED_ACQUIRER_ENTITY
+            if not se_entity:
+                logger.error(
+                    "[PIPELINE] SE pipeline requires entity_id but "
+                    "SEED_ACQUIRER_ENTITY is not configured and "
+                    "config.entity_id is empty"
+                )
+                job.status = "completed_with_errors"
+                job.message = (
+                    "SE pipeline requires entity_id — set "
+                    "SEED_ACQUIRER_ENTITY in .env or pass entity_id in config"
+                )
+                job.completed_at = _now()
+                await _persist_job(job)
+                return
+            context["entity_id"] = se_entity
         else:
             # ── ME pre-flight ──────────────────────────────────────
             # Fetch engagement from Convergence API to get canonical
@@ -1224,6 +1243,15 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
         if cfg.get(key):
             context[key] = cfg[key]
 
+    # SE default: canonical tenant and seed entity — same as run_pipeline_batch
+    if job.pipeline_mode == PipelineMode.SE:
+        if not context.get("tenant_id"):
+            context["tenant_id"] = config.AOS_TENANT_ID
+        if not context.get("entity_id"):
+            context["entity_id"] = (
+                cfg.get("entity_id") or config.SEED_ACQUIRER_ENTITY
+            )
+
     # ME identity from config (set by pre-flight, persisted in job.config)
     if cfg.get("convergence_engagement_id"):
         context["convergence_engagement_id"] = cfg["convergence_engagement_id"]
@@ -1237,10 +1265,18 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
                 context["farm_manifest_id"] = s.data["farm_manifest_id"]
             elif "snapshot_id" in s.data:
                 context["farm_manifest_id"] = s.data["snapshot_id"]
-            if "tenant_id" in s.data:
-                context["tenant_id"] = s.data["tenant_id"]
-            if "entity_id" in s.data:
-                context["entity_id"] = s.data["entity_id"]
+            # Farm snapshot returns its own internal identity — capture
+            # for provenance but do not overwrite canonical pipeline identity.
+            if s.name == "farm_snapshot":
+                if "tenant_id" in s.data:
+                    context["farm_snapshot_tenant_id"] = s.data["tenant_id"]
+                if "entity_id" in s.data:
+                    context["farm_snapshot_entity_id"] = s.data["entity_id"]
+            else:
+                if "tenant_id" in s.data:
+                    context["tenant_id"] = s.data["tenant_id"]
+                if "entity_id" in s.data:
+                    context["entity_id"] = s.data["entity_id"]
             if "aod_discovery_id" in s.data:
                 context["aod_discovery_id"] = s.data["aod_discovery_id"]
             if "handoff_id" in s.data:

@@ -423,6 +423,7 @@ def test_se_pipeline_threads_namespaced_ids(mock_client_cls, mock_db):
     resp = client.post("/api/pipeline/run", json={
         "mode": "SE",
         "entities": ["test-entity"],
+        "config": {"entity_id": "test-entity"},
     })
     assert resp.status_code == 200
     data = resp.json()
