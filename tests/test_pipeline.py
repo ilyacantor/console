@@ -111,15 +111,16 @@ def test_run_se_pipeline(mock_client_cls, mock_db):
 @patch("backend.app.services.pipeline_orchestrator.db")
 @patch("backend.app.services.pipeline_orchestrator.httpx.AsyncClient")
 def test_run_me_pipeline(mock_client_cls, mock_db):
-    """ME pipeline runs 5 steps: financials A∥B → DCL verify → COFA → complete."""
+    """ME pipeline runs 5 steps: financials A∥B → Convergence verify → COFA → complete."""
 
     async def mock_post(url, **kwargs):
         if "/api/farm/manifest-intake" in url:
             resp = _farm_manifest_response()
-            # Inject dcl_ingest_id into Farm response (ME pipeline needs it
-            # to build dcl_ingest_ids context for COFA)
+            # Inject convergence_ingest_id into Farm push_result (ME pipeline
+            # needs it to build convergence_ingest_ids context for COFA)
             data = resp.json()
-            data["dcl_ingest_id"] = f"dcl-ingest-{hash(url) % 1000:03d}"
+            _cid = f"conv-ingest-{hash(url) % 1000:03d}"
+            data["push_result"]["dcl_run_id"] = _cid
             return httpx.Response(200, json=data)
         if "/api/convergence/cofa/unify" in url:
             return httpx.Response(200, json={
@@ -193,7 +194,8 @@ def test_me_pipeline_uses_convergence_engagement(mock_client_cls, mock_db):
         if "/api/farm/manifest-intake" in url:
             resp = _farm_manifest_response()
             data = resp.json()
-            data["dcl_ingest_id"] = f"dcl-ingest-{hash(url) % 1000:03d}"
+            _cid = f"conv-ingest-{hash(url) % 1000:03d}"
+            data["push_result"]["dcl_run_id"] = _cid
             return httpx.Response(200, json=data)
         if "/api/convergence/cofa/unify" in url:
             cofa_bodies.append(kwargs.get("json", {}))

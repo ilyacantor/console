@@ -95,8 +95,8 @@ test.describe('Pipeline ME batch run', () => {
     await expect(m.getByText('ME Mode')).toBeVisible({ timeout: 10_000 })
 
     // ME steps — updated names from Prompt 6
-    await expect(m.getByText('Farm + DCL (Acquirer)').first()).toBeVisible()
-    await expect(m.getByText('Farm + DCL (Target)').first()).toBeVisible()
+    await expect(m.getByText('Farm + Convergence (Acquirer)').first()).toBeVisible()
+    await expect(m.getByText('Farm + Convergence (Target)').first()).toBeVisible()
     await expect(m.getByText('COFA Unification').first()).toBeVisible()
     await expect(m.getByText('Verify').first()).toBeVisible()
     await expect(m.getByText('Pipeline Complete').first()).toBeVisible()
@@ -290,7 +290,7 @@ test.describe('Pipeline ME identity — engagement-based run_name (Prompt 6)', (
 
     // Wait for something to render
     await expect(
-      m.getByText('Farm + DCL (Acquirer)', { exact: false }).first()
+      m.getByText('Farm + Convergence (Acquirer)', { exact: false }).first()
     ).toBeVisible({ timeout: 10_000 })
 
     // Full page text should not contain any 36-char UUID pattern as
@@ -312,8 +312,8 @@ test.describe('Pipeline ME identity — engagement-based run_name (Prompt 6)', (
     await expect(m.getByText('parallel', { exact: true })).toBeVisible()
 
     // Both entity cards should be stacked under the parallel group
-    await expect(m.getByText('Farm + DCL (Acquirer)').first()).toBeVisible()
-    await expect(m.getByText('Farm + DCL (Target)').first()).toBeVisible()
+    await expect(m.getByText('Farm + Convergence (Acquirer)').first()).toBeVisible()
+    await expect(m.getByText('Farm + Convergence (Target)').first()).toBeVisible()
 
     await page.screenshot({ path: 'e2e/screenshots/pipeline-me-parallel-count.png' })
   })

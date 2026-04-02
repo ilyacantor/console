@@ -134,11 +134,11 @@ def create_se_steps() -> list[PipelineStep]:
 def create_me_steps() -> list[PipelineStep]:
     return [
         PipelineStep(name="farm_financials_a",
-                     display_name="Farm + DCL (Acquirer)",
+                     display_name="Farm + Convergence (Acquirer)",
                      message="Generate & ingest financial triples for acquirer",
                      parallel_group="entity_ingest"),
         PipelineStep(name="farm_financials_b",
-                     display_name="Farm + DCL (Target)",
+                     display_name="Farm + Convergence (Target)",
                      message="Generate & ingest financial triples for target",
                      parallel_group="entity_ingest"),
         PipelineStep(name="cofa_unification", display_name="COFA Unification",
@@ -648,31 +648,40 @@ async def _step_farm_financials(
         if farm_status not in ("completed", "skipped"):
             push = data.get("push_result") or {}
             error_detail = push.get("error") or farm_status
+            _target_label = "Convergence" if is_me else "DCL"
             _mark_step(step, StepStatus.FAILED,
-                       f"DCL ingest failed (Farm status={farm_status}): {error_detail}",
+                       f"{_target_label} ingest failed (Farm status={farm_status}): {error_detail}",
                        data=data, start_time=t0)
             return
 
-        # Capture expansion metrics from DCL ingest
+        # Capture expansion metrics from ingest
         rows = data.get("rows_generated", 0)
         push = data.get("push_result") or {}
         accepted = push.get("rows_accepted")
         triples_written = push.get("triples_written") or accepted or rows
         source_rows = data.get("source_rows") or rows
 
-        # Capture dcl_ingest_id from response — per-entity tracking for ME
-        # Farm returns dcl_run_id; accept both names for compatibility
-        dcl_ingest_id = (data.get("dcl_ingest_id")
-                         or push.get("dcl_ingest_id")
-                         or push.get("dcl_run_id"))
-        if dcl_ingest_id:
-            if config_key == "farm_config_a":
-                context["dcl_ingest_id_a"] = dcl_ingest_id
-            elif config_key == "farm_config_b":
-                context["dcl_ingest_id_b"] = dcl_ingest_id
-            else:
+        # Capture ingest ID from response — per-entity tracking for ME.
+        # ME uses convergence_ingest_id (per v7.4.1 identifier registry);
+        # SE uses dcl_ingest_id. Farm returns dcl_run_id in push_result.
+        if is_me:
+            _cid = (data.get("convergence_ingest_id")
+                    or push.get("convergence_ingest_id")
+                    or push.get("dcl_run_id")
+                    or data.get("dcl_ingest_id"))
+            if _cid:
+                if config_key == "farm_config_a":
+                    context["convergence_ingest_id_a"] = _cid
+                elif config_key == "farm_config_b":
+                    context["convergence_ingest_id_b"] = _cid
+                context.setdefault("convergence_ingest_ids", []).append(_cid)
+        else:
+            dcl_ingest_id = (data.get("dcl_ingest_id")
+                             or push.get("dcl_ingest_id")
+                             or push.get("dcl_run_id"))
+            if dcl_ingest_id:
                 context["dcl_ingest_id"] = dcl_ingest_id
-            context.setdefault("dcl_ingest_ids", []).append(dcl_ingest_id)
+                context.setdefault("dcl_ingest_ids", []).append(dcl_ingest_id)
         source_farm = (data.get("source_farm_manifest_id")
                        or push.get("source_farm_manifest_id"))
         if source_farm:
@@ -758,7 +767,7 @@ async def _step_cofa_unification(
     """COFA unification via Convergence HTTP endpoint.
 
     Convergence owns all ME engines including COFA.
-    Sends dcl_ingest_ids array + engagement identity.
+    Sends convergence_ingest_ids array + engagement identity.
     """
     convergence_url = _require_url(
         "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL,
@@ -774,12 +783,12 @@ async def _step_cofa_unification(
                    start_time=t0)
         return
 
-    # Collect dcl_ingest_ids from completed Farm steps
-    dcl_ingest_ids = context.get("dcl_ingest_ids", [])
-    if not dcl_ingest_ids:
+    # Collect convergence_ingest_ids from completed Farm steps
+    convergence_ingest_ids = context.get("convergence_ingest_ids", [])
+    if not convergence_ingest_ids:
         _mark_step(step, StepStatus.FAILED,
-                   "No dcl_ingest_ids in pipeline context — "
-                   "Farm + DCL ingest steps must succeed before COFA.",
+                   "No convergence_ingest_ids in pipeline context — "
+                   "Farm + Convergence ingest steps must succeed before COFA.",
                    start_time=t0)
         return
 
@@ -789,7 +798,7 @@ async def _step_cofa_unification(
     cofa_url = f"{convergence_url}/api/convergence/cofa/unify"
     body: dict[str, Any] = {
         "engagement_id": engagement_id,
-        "dcl_ingest_ids": dcl_ingest_ids,
+        "dcl_ingest_ids": convergence_ingest_ids,
         "pipeline_run_id": pipeline_run_id,
     }
     if tenant_id:
@@ -829,7 +838,7 @@ async def _step_cofa_unification(
 
     _mark_step(step, StepStatus.SUCCESS,
                f"COFA complete — cofa_run_id={cofa_run_id}, "
-               f"consumed {len(dcl_ingest_ids)} ingest(s)",
+               f"consumed {len(convergence_ingest_ids)} ingest(s)",
                data=data, start_time=t0)
 
 
@@ -1287,19 +1296,28 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
                 context["handoff_id"] = s.data["handoff_id"]
             if "aam_inference_id" in s.data:
                 context["aam_inference_id"] = s.data["aam_inference_id"]
-            # Farm returns dcl_run_id; accept both names
-            _dcl_id = s.data.get("dcl_ingest_id")
-            if not _dcl_id:
+            # Extract ingest ID — ME uses convergence_ingest_id, SE uses dcl_ingest_id
+            if s.name in ("farm_financials_a", "farm_financials_b"):
                 _push = s.data.get("push_result") or {}
-                _dcl_id = (_push.get("dcl_ingest_id")
-                           or _push.get("dcl_run_id"))
-            if _dcl_id:
-                context.setdefault("dcl_ingest_ids", []).append(_dcl_id)
-            # ME per-entity dcl_ingest_ids
-            if s.name == "farm_financials_a" and _dcl_id:
-                context["dcl_ingest_id_a"] = _dcl_id
-            if s.name == "farm_financials_b" and _dcl_id:
-                context["dcl_ingest_id_b"] = _dcl_id
+                _cid = (s.data.get("convergence_ingest_id")
+                        or _push.get("convergence_ingest_id")
+                        or _push.get("dcl_run_id")
+                        or s.data.get("dcl_ingest_id"))
+                if _cid:
+                    context.setdefault("convergence_ingest_ids", []).append(_cid)
+                if s.name == "farm_financials_a" and _cid:
+                    context["convergence_ingest_id_a"] = _cid
+                if s.name == "farm_financials_b" and _cid:
+                    context["convergence_ingest_id_b"] = _cid
+            else:
+                _dcl_id = s.data.get("dcl_ingest_id")
+                if not _dcl_id:
+                    _push = s.data.get("push_result") or {}
+                    _dcl_id = (_push.get("dcl_ingest_id")
+                               or _push.get("dcl_run_id"))
+                if _dcl_id:
+                    context.setdefault("dcl_ingest_ids", []).append(_dcl_id)
+                    context["dcl_ingest_id"] = _dcl_id
             # COFA output
             if "cofa_run_id" in s.data:
                 context["cofa_run_id"] = s.data["cofa_run_id"]
