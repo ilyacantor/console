@@ -572,8 +572,20 @@ async def _step_farm_financials(
                    start_time=t0)
         return
 
-    # ME mode pushes to Convergence; SE mode pushes to DCL
+    # ME mode pushes to Convergence; SE mode pushes to DCL.
+    # Both dcl_url and ingest_url must point to the correct target so
+    # Farm has no fallback path that silently routes ME data to DCL.
     is_me = config_key in ("farm_config_a", "farm_config_b")
+
+    if is_me:
+        convergence_url = _require_url(
+            "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL,
+            step.display_name)
+        target_dcl_url = f"{convergence_url}/api/convergence/ingest-triples"
+        target_ingest_url = f"{convergence_url}/api/convergence/ingest-triples"
+    else:
+        target_dcl_url = f"{dcl_url}/api/dcl/ingest"
+        target_ingest_url = None
 
     body: dict[str, Any] = {
         "source": {
@@ -582,19 +594,17 @@ async def _step_farm_financials(
             "category": category,
         },
         "target": {
-            "dcl_url": f"{dcl_url}/api/dcl/ingest",
+            "dcl_url": target_dcl_url,
             "tenant_id": tenant_id or "",
             "snapshot_name": snapshot_name,
             "entity_id": entity_id,
         },
     }
 
+    if target_ingest_url:
+        body["target"]["ingest_url"] = target_ingest_url
+
     if is_me:
-        convergence_url = _require_url(
-            "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL,
-            step.display_name)
-        body["target"]["ingest_url"] = (
-            f"{convergence_url}/api/convergence/ingest-triples")
         # Per-entity farm_manifest_id for Farm provenance + ground truth.
         # Farm uses triples_id (= pipeline_run_id) as the run_id written
         # to convergence_triples, so both entity batches share one run_id.
@@ -608,6 +618,13 @@ async def _step_farm_financials(
 
     # Pipeline-level correlation ID for triple provenance tracking
     body["target"]["triples_id"] = pipeline_run_id
+
+    _started = job.started_at
+    body["provenance"] = {
+        "triggered_by": "console",
+        "pipeline_run_id": pipeline_run_id,
+        "run_timestamp": _started.isoformat() if hasattr(_started, "isoformat") else str(_started or _now()),
+    }
 
     try:
         resp = await client.post(f"{url}/api/farm/manifest-intake",
