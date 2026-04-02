@@ -559,7 +559,7 @@ async def _step_farm_financials(
                  or context.get("entity_id")
                  or cfg.get("entity_id"))
     snapshot_name = (farm_cfg.get("snapshot_name")
-                     or context.get("farm_manifest_id")
+                     or job.run_name
                      or "latest")
     pipe_id = farm_cfg.get("pipe_id", f"{step.name}-financials")
     system = farm_cfg.get("system", "netsuite")
