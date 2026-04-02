@@ -35,10 +35,10 @@ def test_aggregated_health_all_up(mock_client_cls):
     assert resp.status_code == 200
     data = resp.json()
     assert data["overall"] == "healthy"
-    # 5 external modules + Console = 6
-    assert data["total"] == 6
-    assert data["up_count"] == 6
-    assert len(data["services"]) == 6
+    # 6 external modules + Console = 7
+    assert data["total"] == 7
+    assert data["up_count"] == 7
+    assert len(data["services"]) == 7
 
     # Console is always up
     console_svc = next(s for s in data["services"] if s["name"] == "Console")
@@ -67,12 +67,12 @@ def test_aggregated_health_some_down(mock_client_cls):
     resp = client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
-    # 2 up + Console = 3 up out of 6
+    # 2 up + Console = 3 up out of 7
     assert data["overall"] == "degraded"
     assert data["up_count"] == 3
 
     down_services = [s for s in data["services"] if s["status"] == "down"]
-    assert len(down_services) == 3
+    assert len(down_services) == 4
     for svc in down_services:
         assert "Connection refused" in svc["detail"]
 

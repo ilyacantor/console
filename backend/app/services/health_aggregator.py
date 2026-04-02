@@ -17,6 +17,7 @@ SERVICES = [
     ("DCL", config.DCL_BASE_URL, "/api/health"),
     ("NLQ", config.NLQ_BASE_URL, "/api/v1/health"),
     ("Farm", config.FARM_BASE_URL, "/health"),
+    ("Convergence", config.CONVERGENCE_BASE_URL, "/api/health"),
 ]
 
 STANDALONE_URLS = {
@@ -29,6 +30,9 @@ STANDALONE_URLS = {
     if ":8005" in config.NLQ_BASE_URL
     else config.NLQ_BASE_URL,
     "Farm": config.FARM_BASE_URL,
+    "Convergence": config.CONVERGENCE_BASE_URL.replace(":8010", ":3010")
+    if ":8010" in config.CONVERGENCE_BASE_URL
+    else config.CONVERGENCE_BASE_URL,
 }
 
 
