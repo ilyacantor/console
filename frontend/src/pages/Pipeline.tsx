@@ -485,7 +485,7 @@ export default function Pipeline() {
     if (selectedMode !== 'me') return
     setLoadingConvergenceEngagements(true)
     fetchConvergenceEngagements()
-      .then(({ engagements }) => {
+      .then((engagements) => {
         // Most recent first (already sorted by API, but ensure)
         const sorted = [...engagements].sort((a, b) => {
           if (!a.created_at) return 1

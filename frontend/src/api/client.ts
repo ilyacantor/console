@@ -197,8 +197,11 @@ export interface ConvergenceEngagement {
   created_at: string | null
 }
 
-export function fetchConvergenceEngagements(): Promise<{ engagements: ConvergenceEngagement[] }> {
-  return fetchJSON('/api/proxy/convergence/api/convergence/engagements')
+export async function fetchConvergenceEngagements(): Promise<ConvergenceEngagement[]> {
+  const data = await fetchJSON<ConvergenceEngagement[] | { engagements: ConvergenceEngagement[] }>(
+    '/api/proxy/convergence/api/convergence/engagements',
+  )
+  return Array.isArray(data) ? data : data.engagements
 }
 
 export function fetchEngagements(): Promise<{ engagements: Engagement[] }> {

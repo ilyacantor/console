@@ -209,16 +209,14 @@ def test_me_pipeline_uses_convergence_engagement(mock_client_cls, mock_db):
 
     async def mock_get(url, **kwargs):
         if "/api/convergence/engagements" in url:
-            return httpx.Response(200, json={
-                "engagements": [{
-                    "engagement_id": "conv-eng-id-123",
-                    "acquirer_entity_id": "test-entity-a",
-                    "target_entity_id": "test-entity-b",
-                    "short_name": "TstAB",
-                    "tenant_id": "test-tenant",
-                    "state": "active",
-                }]
-            })
+            return httpx.Response(200, json=[{
+                "engagement_id": "conv-eng-id-123",
+                "acquirer_entity_id": "test-entity-a",
+                "target_entity_id": "test-entity-b",
+                "short_name": "TstAB",
+                "tenant_id": "test-tenant",
+                "state": "active",
+            }])
         return httpx.Response(404, json={"detail": "not found"})
 
     mock_client = _make_mock_client(mock_post, mock_get)
