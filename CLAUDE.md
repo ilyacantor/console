@@ -415,3 +415,61 @@ Installed at `.git/hooks/pre-commit`. Blocks commits containing:
 - Bare `run_id` as a response field name (use namespaced identifiers)
 
 Do not bypass with `--no-verify` (C13).
+
+---
+
+# Repo-Specific Guardrails — Console
+
+## Identity
+
+Console is the production-facing operator surface for all AOS products. It orchestrates pipelines and provides the unified UI. It does not own business logic — it delegates to backend services.
+
+- Tech stack: React 18 + TypeScript + Vite + Tailwind (frontend), FastAPI + asyncpg (backend)
+- Backend: port 8009
+- Frontend: port 3009
+
+## Ownership Boundaries
+
+Console owns:
+- Pipeline orchestration (`backend/app/services/pipeline_orchestrator.py`). Console triggers and monitors pipeline runs. Both SE and ME pipelines.
+- Operator UI: pipeline stage cards, per-step entity/timing/diagnostics, Maestra operator feed, tier badges.
+- Mode switching (`frontend/src/context/ModeContext.tsx`, `frontend/src/components/ModeSwitcher.tsx`). Mode controls UI visibility only — which buttons, panels, and iframes are shown. Mode does NOT influence backend routing.
+- Iframe hosting (`frontend/src/components/ModuleIframe.tsx`): Console embeds NLQ (Ask/Dashboard) and Convergence (Reports) as iframes. Console passes entity context via query params.
+- Entity switcher (top bar, ME/MA only).
+- Inspect surface (native DCL views, coverage, sources, COFA merge).
+
+Console does NOT own:
+- Query logic. That's NLQ (SE) and Convergence (ME/MA).
+- Semantic data or triple storage. That's DCL and Convergence.
+- ME engines (combining, bridge, QoE, etc.). That's Convergence.
+- Discovery or connection mapping. That's AOD and AAM.
+- Financial model generation. That's Farm.
+
+## Iframe Configuration
+
+- Ask / Dashboard: iframe → NLQ (SE surface, `pages/Dashboards.tsx`). Entity context passed via query param. Default URL: `http://localhost:3005`.
+- Reports: iframe → Convergence (ME/MA surface, `pages/Reports.tsx`). Entity context passed via query param.
+- Console does not proxy API calls on behalf of iframed apps. Each iframed app talks to its own backend directly.
+
+## Mode Is UI-Only (Permanent Rule)
+
+Console modes (SE, MA, ME, ALL) control ONLY which UI elements are visible. Modes do not:
+- Change which backend service handles a request.
+- Influence how data is routed, stored, or queried.
+- Gate functionality at the API level.
+
+Backend pipeline enum (`backend/app/models/pipeline.py`) has only SE and ME. MA is a frontend display concept — it does not exist in the backend.
+
+If you find mode logic that changes backend behavior (e.g., "if mode == ME then call Convergence, else call DCL"), that is a violation. Console decides what to show. Backend services decide how to process.
+
+## Pipeline Orchestrator
+
+`backend/app/services/pipeline_orchestrator.py` is the shared backend that triggers pipeline runs. It dispatches to the correct services:
+- SE pipeline: Farm Snapshot → AOD Discovery → AOD→AAM Handoff → AAM Inference → Farm Financials → DCL Ingest.
+- ME pipeline: Farm (per entity) → Convergence (per entity) → COFA → Verify.
+
+Either UI surface (Console or Platform in dev) can trigger runs. The orchestrator is backend — UI-agnostic.
+
+## Harness
+
+Console backend tests live at `tests/` (test_pipeline.py, test_upload.py, test_engagements.py, test_health.py, etc.). Frontend E2E tests live at `frontend/e2e/` (mode_e2e.spec.ts, pipeline_e2e.spec.ts, reports_e2e.spec.ts, dashboard_e2e.spec.ts, operator_feed_e2e.spec.ts). B17 Playwright gate required for any UI surface change (new iframe targets, mode switching, pipeline UI, operator feed).
