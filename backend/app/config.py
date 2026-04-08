@@ -18,9 +18,6 @@ NLQ_BASE_URL: str = os.environ.get("NLQ_BASE_URL", "http://localhost:8005").rstr
 PLATFORM_BASE_URL: str = os.environ.get("PLATFORM_BASE_URL", "http://localhost:8006").rstrip("/")
 CONVERGENCE_BASE_URL: str = os.environ.get("CONVERGENCE_BASE_URL", "http://localhost:8010").rstrip("/")
 
-# API Keys
-AOD_API_KEY: str = os.environ.get("AOD_API_KEY", "")
-
 # Tenant
 AOS_TENANT_ID: str = os.environ.get("AOS_TENANT_ID") or os.environ.get("AOS_DEV_TENANT_ID", "")
 

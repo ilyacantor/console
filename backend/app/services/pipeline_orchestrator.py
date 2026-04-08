@@ -44,13 +44,6 @@ def _json_headers() -> dict[str, str]:
     return {"Content-Type": "application/json"}
 
 
-def _aod_headers() -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    if config.AOD_API_KEY:
-        headers["X-API-Key"] = config.AOD_API_KEY
-    return headers
-
-
 def _mark_step(
     step: PipelineStep,
     status: StepStatus,
@@ -369,7 +362,7 @@ async def _step_aod_discovery(
 
     try:
         resp = await client.post(f"{url}/api/runs/from-farm",
-                                 json=body, headers=_aod_headers())
+                                 json=body, headers=_json_headers())
     except httpx.ConnectError:
         _mark_step(step, StepStatus.FAILED,
                    f"Could not reach AOD at {url}/api/runs/from-farm — "
@@ -428,7 +421,7 @@ async def _step_aod_aam_handoff(
     try:
         resp = await client.post(
             f"{url}/api/handoff/aam/export",
-            headers=_aod_headers(),
+            headers=_json_headers(),
             params={
                 "aod_discovery_id": aod_discovery_id,
                 "source_aod_discovery_id": aod_discovery_id,
