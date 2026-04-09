@@ -134,6 +134,9 @@ def create_me_steps() -> list[PipelineStep]:
                      display_name="Farm + Convergence (Target)",
                      message="Generate & ingest financial triples for target",
                      parallel_group="entity_ingest"),
+        PipelineStep(name="convergence_overlay",
+                     display_name="Convergence Multi-Entity Overlay",
+                     message="Generate & ingest customer profile + overlap triples"),
         PipelineStep(name="cofa_unification", display_name="COFA Unification",
                      message="Unify charts of accounts via Convergence"),
         PipelineStep(name="verify", display_name="Verify",
@@ -188,6 +191,8 @@ async def _execute_step(
                                         config_key="farm_config_b")
         elif step.name == "dcl_ingest":
             await _step_dcl_ingest_verify(client, step, job, context, t0)
+        elif step.name == "convergence_overlay":
+            await _step_convergence_overlay(client, step, job, context, t0)
         elif step.name == "cofa_unification":
             await _step_cofa_unification(client, step, job, context, t0)
         elif step.name == "verify":
@@ -701,6 +706,189 @@ async def _step_farm_financials(
                    f"Farm financials failed ({resp.status_code}): "
                    f"{_extract_error(resp)}",
                    start_time=t0)
+
+
+async def _step_convergence_overlay(
+    client: httpx.AsyncClient,
+    step: PipelineStep,
+    job: PipelineJob,
+    context: dict[str, Any],
+    t0: float,
+) -> None:
+    """ME Step 3: Generate multi-entity overlay triples (customer profiles,
+    entity overlaps) via Farm and push to Convergence.
+
+    Runs after the per-entity farm_financials_a/b ingest group completes.
+    Farm's manifest-intake path does not invoke CustomerProfileTripleGenerator
+    or OverlapTripleGenerator — only generate-multi-entity-triples does.
+    Without this stage, cross_sell/qoe/entity_resolution engines see empty
+    customer.* props and produce degenerate scores.
+
+    Fail-loud gates (no silent skip):
+      1. Farm generate non-200 or missing farm_manifest_id
+      2. Farm per-entity domain summary shows zero customer triples
+      3. Farm push-to-dcl non-200, success=false, or missing convergence_ingest_id
+      4. Zero triples pushed
+    """
+    farm_url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL,
+                            "Convergence Overlay")
+
+    tenant_id = context.get("tenant_id")
+    if not tenant_id:
+        _mark_step(step, StepStatus.FAILED,
+                   "No tenant_id in pipeline context — ME pre-flight must "
+                   "resolve tenant_id from Convergence before overlay can run.",
+                   start_time=t0)
+        return
+
+    cfg = job.config
+    acq_entity = (cfg.get("farm_config_a") or {}).get("entity_id")
+    tgt_entity = (cfg.get("farm_config_b") or {}).get("entity_id")
+    if not acq_entity or not tgt_entity:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Missing entity_id on farm_config_a/b — "
+                   f"acquirer={acq_entity!r}, target={tgt_entity!r}. "
+                   f"ME pre-flight must populate both per-entity configs.",
+                   start_time=t0)
+        return
+
+    seed = cfg.get("seed", 42)
+    entities_csv = f"{acq_entity},{tgt_entity}"
+
+    # Step 1: generate overlay triples (skip_push=true — we push explicitly
+    # so this stage owns routing + response capture).
+    try:
+        gen_resp = await client.post(
+            f"{farm_url}/api/business-data/generate-multi-entity-triples",
+            headers=_json_headers(),
+            params={
+                "entities": entities_csv,
+                "seed": str(seed),
+                "tenant_id": tenant_id,
+                "skip_push": "true",
+            },
+        )
+    except httpx.ConnectError:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Could not reach Farm at "
+                   f"{farm_url}/api/business-data/generate-multi-entity-triples "
+                   f"— connection refused.",
+                   start_time=t0)
+        return
+    except httpx.TimeoutException as e:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Farm overlay generation timed out at "
+                   f"{farm_url}/api/business-data/generate-multi-entity-triples "
+                   f"— {e}",
+                   start_time=t0)
+        return
+
+    if gen_resp.status_code != 200:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Farm overlay generate failed ({gen_resp.status_code}): "
+                   f"{_extract_error(gen_resp)}",
+                   start_time=t0)
+        return
+
+    gen_data = gen_resp.json()
+    farm_manifest_id = gen_data.get("farm_manifest_id")
+    if not farm_manifest_id:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Farm overlay generate returned no farm_manifest_id: "
+                   f"{gen_data}",
+                   start_time=t0)
+        return
+
+    # Verify Farm generated customer profile triples for BOTH entities.
+    # Farm's CustomerProfileGenerator silently skips unknown entity_ids
+    # (logs a warning + continues) — we catch that here by requiring
+    # customer domain > 0 in per-entity summary.
+    domain_by_entity = gen_data.get("domain_summary_by_entity") or {}
+    missing_customers: list[str] = []
+    for _eid in (acq_entity, tgt_entity):
+        _counts = domain_by_entity.get(_eid) or {}
+        if _counts.get("customer", 0) == 0:
+            missing_customers.append(_eid)
+    if missing_customers:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Farm generated zero customer.* triples for "
+                   f"entity_id={missing_customers!r}. "
+                   f"CustomerProfileGenerator has no profile data for this "
+                   f"entity — upstream Farm regression. "
+                   f"domain_summary_by_entity={domain_by_entity}",
+                   start_time=t0)
+        return
+
+    # Step 2: push to Convergence (Farm routes by manifest.mode=multi_entity
+    # to CONVERGENCE_INGEST_URL). Blocks until push completes.
+    push_url = (f"{farm_url}/api/business-data/triple-runs/"
+                f"{farm_manifest_id}/push-to-dcl")
+    try:
+        push_resp = await client.post(push_url, headers=_json_headers())
+    except httpx.ConnectError:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Could not reach Farm push-to-dcl at {push_url} — "
+                   f"connection refused.",
+                   start_time=t0)
+        return
+    except httpx.TimeoutException as e:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Farm overlay push timed out at {push_url} — {e}",
+                   start_time=t0)
+        return
+
+    if push_resp.status_code != 200:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Farm overlay push failed ({push_resp.status_code}): "
+                   f"{_extract_error(push_resp)}",
+                   start_time=t0)
+        return
+
+    push_data = push_resp.json()
+    if not push_data.get("success"):
+        _mark_step(step, StepStatus.FAILED,
+                   f"Farm overlay push returned success=false: {push_data}",
+                   start_time=t0)
+        return
+
+    convergence_overlay_id = push_data.get("convergence_ingest_id")
+    if not convergence_overlay_id:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Farm push-to-dcl did not return convergence_ingest_id — "
+                   f"cannot track overlay identity. Response: {push_data}",
+                   start_time=t0)
+        return
+
+    pushed = push_data.get("pushed", 0)
+    if pushed == 0:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Farm overlay push reported zero triples pushed. "
+                   f"Response: {push_data}",
+                   start_time=t0)
+        return
+
+    context["convergence_overlay_id"] = convergence_overlay_id
+    context["overlay_farm_manifest_id"] = farm_manifest_id
+    context.setdefault("convergence_ingest_ids", []).append(
+        convergence_overlay_id)
+
+    customer_total = sum(
+        (domain_by_entity.get(_eid) or {}).get("customer", 0)
+        for _eid in (acq_entity, tgt_entity)
+    )
+    _mark_step(step, StepStatus.SUCCESS,
+               f"Overlay pushed: {pushed} triples "
+               f"({customer_total} customer profiles) — "
+               f"convergence_overlay_id={convergence_overlay_id}",
+               data={
+                   "convergence_overlay_id": convergence_overlay_id,
+                   "overlay_farm_manifest_id": farm_manifest_id,
+                   "triples_pushed": pushed,
+                   "customer_triples": customer_total,
+                   "tenant_id": tenant_id,
+                   "entity_ids": [acq_entity, tgt_entity],
+               },
+               start_time=t0)
 
 
 async def _step_dcl_ingest_verify(
@@ -1311,6 +1499,16 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
                 if _dcl_id:
                     context.setdefault("dcl_ingest_ids", []).append(_dcl_id)
                     context["dcl_ingest_id"] = _dcl_id
+            # Convergence multi-entity overlay
+            if s.name == "convergence_overlay":
+                _ov_id = s.data.get("convergence_overlay_id")
+                if _ov_id:
+                    context["convergence_overlay_id"] = _ov_id
+                    context.setdefault(
+                        "convergence_ingest_ids", []).append(_ov_id)
+                _ov_fm = s.data.get("overlay_farm_manifest_id")
+                if _ov_fm:
+                    context["overlay_farm_manifest_id"] = _ov_fm
             # COFA output
             if "cofa_run_id" in s.data:
                 context["cofa_run_id"] = s.data["cofa_run_id"]

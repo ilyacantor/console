@@ -355,6 +355,8 @@ function CofaTab({ rows, error, acquirerName, targetName }: { rows: CofaMergeRow
     semantic: { bg: '#1A2A47', color: '#60A5FA' },
     manual: { bg: '#332B15', color: '#F59E0B' },
     conflict: { bg: '#2A1515', color: '#FCA5A5' },
+    // 'missing' is a warning state: COFA did not return a match_type for this row.
+    missing: { bg: '#3B1A20', color: '#F87171' },
   }
 
   return (
@@ -567,7 +569,10 @@ function parseCofaRows(raw: Record<string, unknown>): CofaMergeRow[] {
       unified_account: String(item.unified_account ?? item.account ?? ''),
       meridian_account: String(item.meridian_account ?? item.acquirer_account ?? '—'),
       cascadia_account: String(item.cascadia_account ?? item.target_account ?? '—'),
-      match_type: (item.match_type ?? item.type ?? 'semantic') as CofaMergeRow['match_type'],
+      // A1: do NOT silently default to 'semantic' when COFA returns no match_type —
+      // surface the gap as 'missing' so the row renders a warning badge instead
+      // of masking a missing field with a plausible-looking pill.
+      match_type: (item.match_type ?? item.type ?? 'missing') as CofaMergeRow['match_type'],
       confidence: Number(item.confidence ?? 0.85),
       mapping_basis: String(item.mapping_basis ?? item.basis ?? ''),
       match_reasoning: String(item.match_reasoning ?? item.reasoning ?? ''),

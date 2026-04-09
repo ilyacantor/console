@@ -97,6 +97,7 @@ test.describe('Pipeline ME batch run', () => {
     // ME steps — updated names from Prompt 6
     await expect(m.getByText('Farm + Convergence (Acquirer)').first()).toBeVisible()
     await expect(m.getByText('Farm + Convergence (Target)').first()).toBeVisible()
+    await expect(m.getByText('Convergence Multi-Entity Overlay').first()).toBeVisible()
     await expect(m.getByText('COFA Unification').first()).toBeVisible()
     await expect(m.getByText('Verify').first()).toBeVisible()
     await expect(m.getByText('Pipeline Complete').first()).toBeVisible()

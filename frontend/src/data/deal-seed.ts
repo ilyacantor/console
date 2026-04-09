@@ -50,7 +50,7 @@ export interface CofaMergeRow {
   unified_account: string
   meridian_account: string
   cascadia_account: string
-  match_type: 'exact' | 'semantic' | 'manual' | 'conflict'
+  match_type: 'exact' | 'semantic' | 'manual' | 'conflict' | 'missing'
   confidence: number
   mapping_basis: string
   match_reasoning: string
