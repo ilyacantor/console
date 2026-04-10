@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import asdict, dataclass
 
@@ -21,20 +20,19 @@ SERVICES = [
     ("Convergence", config.CONVERGENCE_BASE_URL, "/api/health"),
 ]
 
-# Standalone "open in new tab" URLs per service. In production on Render
-# every service's frontend and backend share a host, so the base URL IS
-# the standalone UI URL. A prior version of this dict rewrote backend
-# dev ports to frontend dev ports for local development, which (a) broke
-# in prod and (b) hardcoded dev-host literals. If you need separate
-# frontend URLs in dev, set them explicitly via STANDALONE_<NAME>_URL
-# env vars below.
 STANDALONE_URLS = {
-    "AOD": os.environ.get("STANDALONE_AOD_URL", config.AOD_BASE_URL),
-    "AAM": os.environ.get("STANDALONE_AAM_URL", config.AAM_BASE_URL),
-    "DCL": os.environ.get("STANDALONE_DCL_URL", config.DCL_BASE_URL),
-    "NLQ": os.environ.get("STANDALONE_NLQ_URL", config.NLQ_BASE_URL),
-    "Farm": os.environ.get("STANDALONE_FARM_URL", config.FARM_BASE_URL),
-    "Convergence": os.environ.get("STANDALONE_CONVERGENCE_URL", config.CONVERGENCE_BASE_URL),
+    "AOD": config.AOD_BASE_URL,
+    "AAM": config.AAM_BASE_URL,
+    "DCL": config.DCL_BASE_URL.replace("://", "://").replace(":8004", ":3004")
+    if ":8004" in config.DCL_BASE_URL
+    else config.DCL_BASE_URL,
+    "NLQ": config.NLQ_BASE_URL.replace(":8005", ":3005")
+    if ":8005" in config.NLQ_BASE_URL
+    else config.NLQ_BASE_URL,
+    "Farm": config.FARM_BASE_URL,
+    "Convergence": config.CONVERGENCE_BASE_URL.replace(":8010", ":3010")
+    if ":8010" in config.CONVERGENCE_BASE_URL
+    else config.CONVERGENCE_BASE_URL,
 }
 
 

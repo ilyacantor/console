@@ -42,10 +42,7 @@ interface OverviewData {
   total_resolution: number
 }
 
-const DCL_BASE = import.meta.env.VITE_DCL_URL
-if (!DCL_BASE) {
-  throw new Error('VITE_DCL_URL is required — set it at build time so Inspect can reach DCL')
-}
+const DCL_BASE = import.meta.env.VITE_DCL_URL || 'http://localhost:3004'
 
 export default function Inspect() {
   const { activeEngagement } = useEngagement()
