@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import ModuleIframe from '../components/ModuleIframe'
 
-const NLQ_BASE = import.meta.env.VITE_NLQ_URL || 'http://localhost:3005'
+const NLQ_BASE = import.meta.env.VITE_NLQ_URL
+if (!NLQ_BASE) {
+  throw new Error('VITE_NLQ_URL is required — set it at build time so DueDiligence can reach NLQ')
+}
 
 type Tab = 'qofe' | 'xsell' | 'upsell' | 'whatif'
 
