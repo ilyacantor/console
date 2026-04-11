@@ -5,7 +5,6 @@ import Dashboards from './pages/Dashboards'
 import Reports from './pages/Reports'
 import Inspect from './pages/Inspect'
 import Deal from './pages/Deal'
-import Upload from './pages/Upload'
 import Changes from './pages/Changes'
 import Tasks from './pages/Tasks'
 import Engagements from './pages/Engagements'
@@ -29,7 +28,6 @@ export default function App() {
         <Route path="/reports" element={<Reports />} />
         <Route path="/inspect" element={<Inspect />} />
         <Route path="/deal" element={<Deal />} />
-        <Route path="/upload" element={<Upload />} />
         <Route path="/due-diligence" element={<DueDiligence />} />
         <Route path="/integration" element={<Integration />} />
         <Route path="/changes" element={<Changes />} />

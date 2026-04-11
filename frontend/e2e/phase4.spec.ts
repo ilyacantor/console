@@ -11,7 +11,6 @@ test.describe('Sidebar navigation', () => {
   test('all Phase 4 nav links present', async ({ page }) => {
     await page.goto('/')
     const sidebar = page.locator('nav')
-    await expect(sidebar.getByText('Upload')).toBeVisible()
     await expect(sidebar.getByText('Config')).toBeVisible()
     await expect(sidebar.getByText('Instrumentation')).toBeVisible()
     await expect(sidebar.getByText('Engagements')).toBeVisible()
@@ -30,59 +29,6 @@ test.describe('Sidebar navigation', () => {
   })
 })
 
-// ── Upload screen ───────────────────────────────────────────────────
-
-test.describe('Upload page', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/upload')
-  })
-
-  test('heading renders', async ({ page }) => {
-    await expect(main(page).getByRole('heading', { name: 'Upload' })).toBeVisible()
-  })
-
-  test('acquirer and target panels present', async ({ page }) => {
-    // Labels are styled pills inside main content
-    await expect(main(page).getByText('Acquirer', { exact: true })).toBeVisible()
-    await expect(main(page).getByText('Target', { exact: true })).toBeVisible()
-  })
-
-  test('drop zones present with instructions', async ({ page }) => {
-    const dropTexts = main(page).getByText('Drop GL and CoA files here')
-    await expect(dropTexts).toHaveCount(2)
-    const csvHints = main(page).getByText('CSV or Excel')
-    await expect(csvHints).toHaveCount(2)
-  })
-
-  test('file input elements exist (hidden)', async ({ page }) => {
-    const inputs = main(page).locator('input[type="file"]')
-    await expect(inputs).toHaveCount(2)
-  })
-
-  test('optional enrichment section present', async ({ page }) => {
-    await expect(main(page).getByText('Optional enrichment')).toBeVisible()
-    await expect(main(page).getByText('Unlocks deliverables 8-10')).toBeVisible()
-    await expect(main(page).getByText('Customer data')).toBeVisible()
-    await expect(main(page).getByText('Vendor data')).toBeVisible()
-    await expect(main(page).getByText('Headcount data')).toBeVisible()
-  })
-
-  test('intake pipeline section present', async ({ page }) => {
-    await expect(main(page).getByText('Intake pipeline')).toBeVisible()
-    await expect(main(page).getByText('Parse GL (acquirer)')).toBeVisible()
-    await expect(main(page).getByText('Parse GL (target)')).toBeVisible()
-    await expect(main(page).getByText('Validate both GLs')).toBeVisible()
-    await expect(main(page).getByText('Convert to triples')).toBeVisible()
-    await expect(main(page).getByText('Push to PG')).toBeVisible()
-    await expect(main(page).getByText('Trigger COFA chain')).toBeVisible()
-  })
-
-  test('proceed button present and disabled initially', async ({ page }) => {
-    const btn = main(page).getByRole('button', { name: /proceed to mapping/i })
-    await expect(btn).toBeVisible()
-    await expect(btn).toBeDisabled()
-  })
-})
 
 // ── Config screen ───────────────────────────────────────────────────
 
@@ -254,7 +200,6 @@ test.describe('Narrative Editor page', () => {
 
 test.describe('Route accessibility', () => {
   const routes = [
-    { path: '/upload', heading: 'Upload' },
     { path: '/config', heading: 'Config' },
     { path: '/instrumentation', heading: 'Instrumentation' },
     { path: '/engagements', heading: 'Engagements' },
@@ -274,13 +219,6 @@ test.describe('Route accessibility', () => {
 // ── Sidebar navigation clicks ───────────────────────────────────────
 
 test.describe('Sidebar click navigation', () => {
-  test('clicking Upload navigates to /upload', async ({ page }) => {
-    await page.goto('/')
-    await page.locator('nav').getByText('Upload').click()
-    await expect(page).toHaveURL(/\/upload/)
-    await expect(main(page).getByRole('heading', { name: 'Upload' })).toBeVisible()
-  })
-
   test('clicking Config navigates to /config', async ({ page }) => {
     await page.goto('/')
     await page.locator('nav').getByText('Config').click()

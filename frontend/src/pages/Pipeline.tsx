@@ -718,7 +718,7 @@ export default function Pipeline() {
                 )}
                 {convergenceEngagements.map((eng) => (
                   <option key={eng.engagement_id} value={eng.engagement_id}>
-                    {eng.short_name || `${eng.acquirer_entity_id} + ${eng.target_entity_id}`}
+                    {eng.engagement_short_name || `${eng.acquirer_entity_id} + ${eng.target_entity_id}`}
                   </option>
                 ))}
               </select>

@@ -111,17 +111,30 @@ def test_run_se_pipeline(mock_client_cls, mock_db):
 @patch("backend.app.services.pipeline_orchestrator.db")
 @patch("backend.app.services.pipeline_orchestrator.httpx.AsyncClient")
 def test_run_me_pipeline(mock_client_cls, mock_db):
-    """ME pipeline runs 5 steps: financials A∥B → Convergence verify → COFA → complete."""
+    """ME pipeline runs 6 steps: financials A∥B → overlay → COFA → verify → complete."""
 
     async def mock_post(url, **kwargs):
         if "/api/farm/manifest-intake" in url:
             resp = _farm_manifest_response()
-            # Inject convergence_ingest_id into Farm push_result (ME pipeline
-            # needs it to build convergence_ingest_ids context for COFA)
             data = resp.json()
             _cid = f"conv-ingest-{hash(url) % 1000:03d}"
             data["push_result"]["dcl_run_id"] = _cid
             return httpx.Response(200, json=data)
+        if "/api/business-data/generate-multi-entity-triples" in url:
+            return httpx.Response(200, json={
+                "farm_manifest_id": "overlay-farm-001",
+                "triple_count": 500,
+                "domain_summary_by_entity": {
+                    "test-entity-a": {"customer": 200, "vendor": 50},
+                    "test-entity-b": {"customer": 150, "vendor": 50},
+                },
+            })
+        if "/api/business-data/triple-runs/" in url and "/push-to-dcl" in url:
+            return httpx.Response(200, json={
+                "success": True,
+                "pushed": 500,
+                "convergence_ingest_id": "conv-overlay-001",
+            })
         if "/api/convergence/cofa/unify" in url:
             return httpx.Response(200, json={
                 "cofa_run_id": "cofa-run-001",
@@ -168,16 +181,17 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
 
     assert data["pipeline_mode"] == "me"
     assert data["status"] == "completed"
-    assert len(data["steps"]) == 5
+    assert len(data["steps"]) == 6
 
     # Verify pipeline_run_id is a full UUID
     assert len(data["pipeline_run_id"]) == 36
 
     assert data["steps"][0]["name"] == "farm_financials_a"
     assert data["steps"][1]["name"] == "farm_financials_b"
-    assert data["steps"][2]["name"] == "cofa_unification"
-    assert data["steps"][3]["name"] == "verify"
-    assert data["steps"][4]["name"] == "complete"
+    assert data["steps"][2]["name"] == "convergence_overlay"
+    assert data["steps"][3]["name"] == "cofa_unification"
+    assert data["steps"][4]["name"] == "verify"
+    assert data["steps"][5]["name"] == "complete"
 
     for step in data["steps"]:
         assert step["status"] == "success"
@@ -197,6 +211,21 @@ def test_me_pipeline_uses_convergence_engagement(mock_client_cls, mock_db):
             _cid = f"conv-ingest-{hash(url) % 1000:03d}"
             data["push_result"]["dcl_run_id"] = _cid
             return httpx.Response(200, json=data)
+        if "/api/business-data/generate-multi-entity-triples" in url:
+            return httpx.Response(200, json={
+                "farm_manifest_id": "overlay-farm-002",
+                "triple_count": 500,
+                "domain_summary_by_entity": {
+                    "test-entity-a": {"customer": 200, "vendor": 50},
+                    "test-entity-b": {"customer": 150, "vendor": 50},
+                },
+            })
+        if "/api/business-data/triple-runs/" in url and "/push-to-dcl" in url:
+            return httpx.Response(200, json={
+                "success": True,
+                "pushed": 500,
+                "convergence_ingest_id": "conv-overlay-002",
+            })
         if "/api/convergence/cofa/unify" in url:
             cofa_bodies.append(kwargs.get("json", {}))
             return httpx.Response(200, json={
@@ -208,27 +237,20 @@ def test_me_pipeline_uses_convergence_engagement(mock_client_cls, mock_db):
         return httpx.Response(404, json={"detail": "not found"})
 
     async def mock_get(url, **kwargs):
-        if "/api/convergence/engagements" in url:
-            return httpx.Response(200, json=[{
+        if "/api/convergence/engagements/" in url:
+            return httpx.Response(200, json={
                 "engagement_id": "conv-eng-id-123",
                 "acquirer_entity_id": "test-entity-a",
                 "target_entity_id": "test-entity-b",
                 "short_name": "TstAB",
                 "tenant_id": "test-tenant",
                 "state": "active",
-            }])
+            })
         return httpx.Response(404, json={"detail": "not found"})
 
     mock_client = _make_mock_client(mock_post, mock_get)
     mock_client_cls.return_value = mock_client
     mock_db.save_pipeline_job = AsyncMock()
-    mock_db.get_engagement = AsyncMock(return_value={
-        "engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        "acquirer_entity_id": "test-entity-a",
-        "target_entity_id": "test-entity-b",
-        "tenant_id": "test-tenant",
-    })
-    mock_db.link_convergence_engagement = AsyncMock()
 
     resp = client.post("/api/pipeline/run", json={
         "mode": "ME",
@@ -239,8 +261,8 @@ def test_me_pipeline_uses_convergence_engagement(mock_client_cls, mock_db):
     data = resp.json()
 
     # COFA step uses Convergence engagement_id, not Console UUID
-    assert data["steps"][2]["name"] == "cofa_unification"
-    assert data["steps"][2]["status"] == "success"
+    assert data["steps"][3]["name"] == "cofa_unification"
+    assert data["steps"][3]["status"] == "success"
     assert len(cofa_bodies) == 1
     assert cofa_bodies[0]["engagement_id"] == "conv-eng-id-123"
 
@@ -458,6 +480,21 @@ def test_cofa_sends_pipeline_run_id_to_convergence(mock_client_cls, mock_db):
             data = resp.json()
             data["dcl_ingest_id"] = f"dcl-ingest-{hash(url) % 1000:03d}"
             return httpx.Response(200, json=data)
+        if "/api/business-data/generate-multi-entity-triples" in url:
+            return httpx.Response(200, json={
+                "farm_manifest_id": "overlay-farm-003",
+                "triple_count": 500,
+                "domain_summary_by_entity": {
+                    "test-entity-a": {"customer": 200, "vendor": 50},
+                    "test-entity-b": {"customer": 150, "vendor": 50},
+                },
+            })
+        if "/api/business-data/triple-runs/" in url and "/push-to-dcl" in url:
+            return httpx.Response(200, json={
+                "success": True,
+                "pushed": 500,
+                "convergence_ingest_id": "conv-overlay-003",
+            })
         if "/api/convergence/cofa/unify" in url:
             cofa_bodies.append(kwargs.get("json", {}))
             return httpx.Response(200, json={
