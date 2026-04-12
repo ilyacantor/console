@@ -243,11 +243,19 @@ test.describe('Pipeline ME identity — engagement-based run_name (Prompt 6)', (
     const dropdown = m.locator('[data-testid="me-engagement-dropdown"]')
     await expect(dropdown).toBeVisible({ timeout: 5_000 })
 
-    // Dropdown should have at least one option (from Convergence or fallback)
-    const options = dropdown.locator('option')
-    const count = await options.count()
-    // Even if Convergence is down, the "No engagements found" option exists
-    expect(count).toBeGreaterThan(0)
+    // Wait for a real option (non-empty value) — fails loud if stuck on
+    // "Loading engagements...", "No engagements in tenant", or error row.
+    const realOption = dropdown.locator('option[value]:not([value=""])').first()
+    await expect(realOption).toBeAttached({ timeout: 10_000 })
+
+    // Error state must not be rendered
+    await expect(dropdown.locator('[data-testid="me-engagement-error"]')).toHaveCount(0)
+    await expect(dropdown.locator('[data-testid="me-engagement-empty"]')).toHaveCount(0)
+
+    // Selected option must be a real engagement, not a placeholder
+    const selectedText = (await dropdown.locator('option:checked').textContent()) ?? ''
+    expect(selectedText).not.toMatch(/Loading engagements|No engagements|Failed to load/)
+    expect(selectedText.trim().length).toBeGreaterThan(0)
 
     await page.screenshot({ path: 'e2e/screenshots/pipeline-me-engagement-dropdown.png' })
   })

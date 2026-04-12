@@ -479,14 +479,15 @@ export default function Pipeline() {
   const [convergenceEngagements, setConvergenceEngagements] = useState<ConvergenceEngagement[]>([])
   const [selectedConvergenceEngagement, setSelectedConvergenceEngagement] = useState<ConvergenceEngagement | null>(null)
   const [loadingConvergenceEngagements, setLoadingConvergenceEngagements] = useState(false)
+  const [engagementsError, setEngagementsError] = useState<string | null>(null)
 
   // Load Convergence engagements when ME mode selected
   useEffect(() => {
     if (selectedMode !== 'me') return
     setLoadingConvergenceEngagements(true)
+    setEngagementsError(null)
     fetchConvergenceEngagements()
       .then((engagements) => {
-        // Most recent first (already sorted by API, but ensure)
         const sorted = [...engagements].sort((a, b) => {
           if (!a.created_at) return 1
           if (!b.created_at) return -1
@@ -498,8 +499,10 @@ export default function Pipeline() {
         }
       })
       .catch((err) => {
-        console.warn('Failed to load Convergence engagements:', err)
-        setConvergenceEngagements([])
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('Failed to load Convergence engagements:', msg)
+        setEngagementsError(msg)
+        setSelectedConvergenceEngagement(null)
       })
       .finally(() => setLoadingConvergenceEngagements(false))
   }, [selectedMode]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -697,14 +700,14 @@ export default function Pipeline() {
                     (c) => c.engagement_id === e.target.value)
                   if (eng) setSelectedConvergenceEngagement(eng)
                 }}
-                disabled={!!isRunning || loadingConvergenceEngagements}
+                disabled={!!isRunning || loadingConvergenceEngagements || !!engagementsError}
                 style={{
                   padding: '5px 10px',
                   fontSize: '11px',
                   borderRadius: '8px',
-                  border: '0.5px solid var(--border)',
-                  background: 'var(--bg-card)',
-                  color: '#fff',
+                  border: engagementsError ? '1px solid #F87171' : '0.5px solid var(--border)',
+                  background: engagementsError ? 'rgba(248,113,113,0.08)' : 'var(--bg-card)',
+                  color: engagementsError ? '#F87171' : '#fff',
                   cursor: isRunning ? 'not-allowed' : 'pointer',
                   opacity: isRunning ? 0.5 : 1,
                   minWidth: '160px',
@@ -713,10 +716,15 @@ export default function Pipeline() {
                 {loadingConvergenceEngagements && (
                   <option value="">Loading engagements...</option>
                 )}
-                {!loadingConvergenceEngagements && convergenceEngagements.length === 0 && (
-                  <option value="">No engagements found</option>
+                {!loadingConvergenceEngagements && engagementsError && (
+                  <option value="" data-testid="me-engagement-error">
+                    Failed to load engagements: {engagementsError}
+                  </option>
                 )}
-                {convergenceEngagements.map((eng) => (
+                {!loadingConvergenceEngagements && !engagementsError && convergenceEngagements.length === 0 && (
+                  <option value="" data-testid="me-engagement-empty">No engagements in tenant</option>
+                )}
+                {!engagementsError && convergenceEngagements.map((eng) => (
                   <option key={eng.engagement_id} value={eng.engagement_id}>
                     {eng.engagement_short_name || `${eng.acquirer_entity_id} + ${eng.target_entity_id}`}
                   </option>
@@ -726,29 +734,36 @@ export default function Pipeline() {
           )}
 
           {/* Run */}
-          <button
-            onClick={handleStart}
-            disabled={!canStart || starting}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '5px 14px',
-              fontSize: '12px',
-              fontWeight: 500,
-              borderRadius: '8px',
-              background: '#2563EB',
-              color: '#fff',
-              border: 'none',
-              cursor: (!canStart || starting) ? 'not-allowed' : 'pointer',
-              opacity: (!canStart || starting) ? 0.5 : 1,
-            }}
-          >
-            {starting
-              ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-              : <Play size={14} />}
-            Run {selectedMode.toUpperCase()}
-          </button>
+          {(() => {
+            const runBlocked = selectedMode === 'me' && (!!engagementsError || !selectedConvergenceEngagement)
+            const runDisabled = !canStart || starting || runBlocked
+            return (
+              <button
+                onClick={handleStart}
+                disabled={runDisabled}
+                title={engagementsError ? `Cannot run: ${engagementsError}` : undefined}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 14px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  borderRadius: '8px',
+                  background: '#2563EB',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: runDisabled ? 'not-allowed' : 'pointer',
+                  opacity: runDisabled ? 0.5 : 1,
+                }}
+              >
+                {starting
+                  ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  : <Play size={14} />}
+                Run {selectedMode.toUpperCase()}
+              </button>
+            )
+          })()}
 
           {/* Next Step */}
           {isStepMode && hasActiveJob && !jobTerminal && nextStepName && (
