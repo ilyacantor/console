@@ -31,6 +31,7 @@ async def init_pool() -> None:
         min_size=1,
         max_size=5,
         command_timeout=30,
+        max_inactive_connection_lifetime=60,
     )
     await _ensure_schema()
     await _seed_config()
