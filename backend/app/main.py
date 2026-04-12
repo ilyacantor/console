@@ -20,7 +20,6 @@ from backend.app.routes.narrative import router as narrative_router
 from backend.app.routes.operator_feed import router as operator_feed_router
 from backend.app.routes.pipeline import router as pipeline_router
 from backend.app.routes.proxy import router as proxy_router
-from backend.app.routes.upload import router as upload_router
 from backend.app.services import cron_scheduler
 
 logging.basicConfig(
@@ -71,7 +70,6 @@ app.include_router(proxy_router, prefix="/api/proxy", tags=["Proxy"])
 app.include_router(engagements_router, prefix="/api/engagements", tags=["Engagements"])
 app.include_router(changes_router, prefix="/api/changes", tags=["Changes"])
 app.include_router(config_router, prefix="/api/config", tags=["Config"])
-app.include_router(upload_router, prefix="/api/upload", tags=["Upload"])
 app.include_router(instrumentation_router, prefix="/api/instrumentation", tags=["Instrumentation"])
 app.include_router(narrative_router, prefix="/api/narrative", tags=["Narrative"])
 app.include_router(operator_feed_router, prefix="/api/operator-feed", tags=["Operator Feed"])

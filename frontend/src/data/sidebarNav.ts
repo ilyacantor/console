@@ -64,7 +64,6 @@ const SYSTEM: NavSection = {
     { label: 'Config', path: '/config', color: '#9CA3AF' },
     { label: 'Narrative', path: '/narrative-editor', color: '#9CA3AF' },
     { label: 'Policy', path: '', color: '#9CA3AF', external: 'https://aodv3-1.onrender.com' },
-    { label: 'Upload', path: '/upload', color: '#9CA3AF' },
   ],
 }
 

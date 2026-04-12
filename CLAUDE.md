@@ -24,7 +24,7 @@ Rules agents violate most often:
 **Canonical governing documents:**
 - `convergence_MA_spec_v7.4.1` — single source of truth for all AOS architecture. Supersedes all prior versions.
 - `pipeline_identity_architecture_v1` — governs all pipeline identity, provenance, and naming. Supersedes ad-hoc ID conventions.
-- `AOS_MASTER_RACI_v8.3.csv` — module ownership matrix. 7 active services + Console. The RACI summary below is abbreviated — the CSV is authoritative.
+- `AOS_MASTER_RACI_v8.5.csv` — module ownership matrix. 7 active services + Console. The RACI summary below is abbreviated — the CSV is authoritative.
 - `se_triples_conversion_build_plan_v2.2.md` — SE/ME triple write paths, deferred AOD/AAM conversion specs, EAV data model.
 
 ---
@@ -88,7 +88,7 @@ SE: {entity_id}-{short_hash} (e.g., BlueLogic-NEQ8-a9ed). ME: {engagement_short_
 ---
 
 ## MODULE RACI — SUMMARY
-**Authoritative source: `AOS_MASTER_RACI_v8.3.csv`**
+**Authoritative source: `AOS_MASTER_RACI_v8.5.csv`**
 
 | Module | Owns | Does NOT own |
 |--------|------|-------------|
@@ -415,6 +415,15 @@ Installed at `.git/hooks/pre-commit`. Blocks commits containing:
 - Bare `run_id` as a response field name (use namespaced identifiers)
 
 Do not bypass with `--no-verify` (C13).
+
+---
+
+# Branch hygiene (B17)
+
+- Feature branches are merged to dev and deleted in the same session they are created.
+- Unmerged branches at session end are a B17 failure and must be reported.
+- `--no-verify` is banned. If a hook blocks a legitimate change, fix the hook scope, then commit.
+- Session start: run `git fetch --all --prune && git branch -a` and report stale branches before new work.
 
 ---
 

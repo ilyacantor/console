@@ -191,17 +191,18 @@ export interface ConvergenceEngagement {
   engagement_id: string
   acquirer_entity_id: string
   target_entity_id: string
-  short_name: string
+  engagement_short_name: string | null
   tenant_id: string | null
-  state: string
+  lifecycle_stage: string
+  state: Record<string, unknown> | null
   created_at: string | null
 }
 
 export async function fetchConvergenceEngagements(): Promise<ConvergenceEngagement[]> {
-  const data = await fetchJSON<ConvergenceEngagement[] | { engagements: ConvergenceEngagement[] }>(
-    '/api/proxy/convergence/api/convergence/engagements',
+  const data = await fetchJSON<{ engagements: ConvergenceEngagement[] }>(
+    '/api/engagements',
   )
-  return Array.isArray(data) ? data : data.engagements
+  return data.engagements
 }
 
 export function fetchEngagements(): Promise<{ engagements: Engagement[] }> {
@@ -321,55 +322,6 @@ export function fetchChangeSummary(): Promise<ChangeSummary> {
 
 export function triggerDetection(module: string): Promise<{ status: string; events_detected: number }> {
   return fetchJSON(`/api/changes/detect/${module}`, { method: 'POST' })
-}
-
-// Upload
-export interface UploadResult {
-  upload_id: string
-  engagement_id: string | null
-  entity_id: string
-  file_name: string
-  file_type: string
-  file_size: number
-  parse_result: {
-    file_name?: string
-    file_type?: string
-    rows?: number
-    accounts?: number
-    periods?: number
-    format?: string
-    hierarchy_levels?: number
-    validations?: { check: string; pass: boolean; detail: string }[]
-    error?: string
-  } | null
-  status: string
-  created_at: string | null
-}
-
-export async function uploadFile(
-  file: File,
-  entityId: string,
-  engagementId?: string,
-): Promise<UploadResult> {
-  const form = new FormData()
-  form.append('file', file)
-  form.append('entity_id', entityId)
-  if (engagementId) form.append('engagement_id', engagementId)
-  const resp = await fetch('/api/upload', { method: 'POST', body: form })
-  if (!resp.ok) {
-    let detail = `HTTP ${resp.status}`
-    try { const b = await resp.json(); if (b.detail) detail = b.detail } catch {}
-    throw new Error(detail)
-  }
-  return resp.json()
-}
-
-export function fetchUploadStatus(uploadId: string): Promise<UploadResult> {
-  return fetchJSON(`/api/upload/status/${uploadId}`)
-}
-
-export function proceedUpload(uploadId: string): Promise<{ upload_id: string; status: string; conversion: Record<string, unknown> }> {
-  return fetchJSON(`/api/upload/proceed/${uploadId}`, { method: 'POST' })
 }
 
 // Config

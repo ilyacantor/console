@@ -1203,77 +1203,34 @@ async def _me_preflight(
 
     convergence_url = convergence_url.rstrip("/")
 
-    # Option A: Convergence engagement_id already in config (from dropdown)
-    conv_engagement_id = cfg.get("convergence_engagement_id")
+    # Engagement ID — Convergence is the canonical owner
+    engagement_id = (cfg.get("convergence_engagement_id")
+                     or cfg.get("engagement_id"))
+    if not engagement_id:
+        raise RuntimeError(
+            "ME pre-flight — no engagement_id in pipeline config")
 
-    # Option B: Console engagement_id → look up its linked Convergence ID
-    console_engagement_id = cfg.get("engagement_id")
+    url = (f"{convergence_url}/api/convergence/engagements/"
+           f"{engagement_id}")
+    try:
+        resp = await client.get(url, headers=_json_headers())
+    except httpx.ConnectError:
+        raise RuntimeError(
+            f"ME pre-flight — Could not reach Convergence "
+            f"at {url} — connection refused")
+    except httpx.TimeoutException:
+        raise RuntimeError(
+            f"ME pre-flight — Convergence timed out at {url}")
 
-    if conv_engagement_id:
-        # Fetch directly from Convergence by ID
-        url = (f"{convergence_url}/api/convergence/engagements/"
-               f"{conv_engagement_id}")
-        try:
-            resp = await client.get(url, headers=_json_headers())
-        except httpx.ConnectError:
-            raise RuntimeError(
-                f"ME pre-flight — Could not reach Convergence "
-                f"at {url} — connection refused")
-        except httpx.TimeoutException:
-            raise RuntimeError(
-                f"ME pre-flight — Convergence timed out at {url}")
+    if resp.status_code == 404:
+        raise RuntimeError(
+            f"ME pre-flight — engagement {engagement_id} not found in Convergence")
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"ME pre-flight — Convergence returned "
+            f"{resp.status_code}: {_extract_error(resp)}")
 
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"ME pre-flight — Convergence returned "
-                f"{resp.status_code}: {_extract_error(resp)}")
-
-        eng = resp.json()
-    else:
-        # Fetch engagement list from Convergence and match by entity pair
-        # from Console engagement record
-        eng = None
-        if console_engagement_id:
-            console_eng = await db.get_engagement(console_engagement_id)
-            if console_eng:
-                acq = console_eng.get("acquirer_entity_id")
-                tgt = console_eng.get("target_entity_id")
-
-                url = f"{convergence_url}/api/convergence/engagements"
-                try:
-                    resp = await client.get(url, headers=_json_headers())
-                except (httpx.ConnectError, httpx.TimeoutException) as e:
-                    raise RuntimeError(
-                        f"ME pre-flight — Convergence unreachable: {e}"
-                    ) from e
-
-                if resp.status_code != 200:
-                    raise RuntimeError(
-                        f"ME pre-flight — Convergence engagements "
-                        f"returned {resp.status_code}")
-
-                engs = resp.json()
-                if isinstance(engs, dict):
-                    engs = engs.get("engagements", [])
-
-                # Match by entity pair
-                for e in engs:
-                    if (e.get("acquirer_entity_id") == acq
-                            and e.get("target_entity_id") == tgt):
-                        eng = e
-                        break
-
-                # Store link for future runs
-                if eng and console_engagement_id:
-                    await db.link_convergence_engagement(
-                        console_engagement_id,
-                        str(eng["engagement_id"]),
-                        eng.get("short_name", ""),
-                    )
-
-        if not eng:
-            raise RuntimeError(
-                "ME pre-flight — no matching engagement found in Convergence")
+    eng = resp.json()
 
     # Populate context from Convergence engagement
     context["convergence_engagement_id"] = str(eng["engagement_id"])
@@ -1283,12 +1240,8 @@ async def _me_preflight(
     acq_entity = eng.get("acquirer_entity_id", "")
     tgt_entity = eng.get("target_entity_id", "")
 
-    # tenant_id: Convergence engagement > Console engagement > env
+    # tenant_id: Convergence engagement > env
     tenant_id = eng.get("tenant_id")
-    if not tenant_id and console_engagement_id:
-        console_eng = await db.get_engagement(console_engagement_id)
-        if console_eng:
-            tenant_id = console_eng.get("tenant_id")
     if not tenant_id:
         tenant_id = config.AOS_TENANT_ID
     context["tenant_id"] = tenant_id
