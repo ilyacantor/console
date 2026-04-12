@@ -413,14 +413,12 @@ def test_se_pipeline_threads_namespaced_ids(mock_client_cls, mock_db):
             captured_bodies["discovery"] = body
             return httpx.Response(200, json={
                 "aod_discovery_id": "aod-disc-001",
-                "consumed_snapshot_id": "farm-snap-001",
                 "counts": {"assets_admitted": 5},
             })
         if "/api/handoff/aam/export" in url:
             captured_bodies["handoff"] = kwargs.get("params", {})
             return httpx.Response(200, json={
                 "handoff_id": "handoff-001",
-                "source_aod_discovery_id": "aod-disc-001",
                 "candidates_sent": 3,
             })
         if "/api/aam/infer" in url:

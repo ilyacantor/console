@@ -221,11 +221,10 @@ async def _step_farm_snapshot(
     context: dict[str, Any],
     t0: float,
 ) -> None:
-    """SE Step 1: Create Farm snapshot.  Farm owns snapshot identity generation
-    (fresh tenant_id + entity_id per snapshot).  Console captures Farm's identity
-    as provenance (farm_snapshot_tenant_id, farm_snapshot_entity_id) but does not
-    overwrite the canonical pipeline identity (context["tenant_id"], context["entity_id"])
-    which flows to DCL at the write boundary."""
+    """SE Step 1: Create Farm snapshot. Farm owns snapshot identity generation
+    (fresh tenant_id + entity_id per snapshot). In SE mode Farm's entity_id IS
+    the canonical pipeline identity. In ME mode entity_id is set by engagement
+    pre-flight and Farm's value is ignored (only farm_manifest_id is captured)."""
     url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL, "Farm Snapshot")
     cfg = job.config
 
@@ -254,22 +253,13 @@ async def _step_farm_snapshot(
 
     if resp.status_code == 200:
         data = resp.json()
-        # Capture namespaced ID from Farm
         farm_manifest_id = data.get("farm_manifest_id") or data.get("snapshot_id")
         if farm_manifest_id:
             context["farm_manifest_id"] = farm_manifest_id
-        # Farm generates its own internal identity per snapshot.
-        # SE: Farm's entity_id IS the canonical pipeline identity.
-        # ME: stored as provenance only (entity_id set by pre-flight).
-        if data.get("entity_id"):
-            context["farm_snapshot_entity_id"] = data["entity_id"]
-            if job.pipeline_mode == PipelineMode.SE:
-                context["entity_id"] = data["entity_id"]
+        if job.pipeline_mode == PipelineMode.SE and data.get("entity_id"):
+            context["entity_id"] = data["entity_id"]
         if data.get("tenant_name"):
             context.setdefault("entity_name", data["tenant_name"])
-        if data.get("tenant_id"):
-            context["farm_snapshot_tenant_id"] = data["tenant_id"]
-        # Update run_name now that entity_id is available
         _update_run_name(job, context)
         _mark_step(step, StepStatus.SUCCESS, "Snapshot ready",
                    data=data, start_time=t0)
@@ -304,14 +294,10 @@ async def _step_farm_snapshot(
                                         or data.get("snapshot_id"))
                     if farm_manifest_id:
                         context["farm_manifest_id"] = farm_manifest_id
-                    if result.get("entity_id"):
-                        context["farm_snapshot_entity_id"] = result["entity_id"]
-                        if job.pipeline_mode == PipelineMode.SE:
-                            context["entity_id"] = result["entity_id"]
+                    if job.pipeline_mode == PipelineMode.SE and result.get("entity_id"):
+                        context["entity_id"] = result["entity_id"]
                     if result.get("tenant_name"):
                         context.setdefault("entity_name", result["tenant_name"])
-                    if result.get("tenant_id"):
-                        context["farm_snapshot_tenant_id"] = result["tenant_id"]
                     _update_run_name(job, context)
                     _mark_step(step, StepStatus.SUCCESS, "Snapshot ready",
                                data=result, start_time=t0)
@@ -382,13 +368,9 @@ async def _step_aod_discovery(
 
     if resp.status_code == 200:
         data = resp.json()
-        # Capture namespaced ID from AOD (I1: no bare run_id fallback)
         aod_discovery_id = data.get("aod_discovery_id")
         if aod_discovery_id:
             context["aod_discovery_id"] = aod_discovery_id
-        consumed = data.get("consumed_snapshot_id")
-        if consumed:
-            context["consumed_snapshot_id"] = consumed
         counts = data.get("counts") or {}
         asset_count = counts.get("assets_admitted", "?")
         _mark_step(step, StepStatus.SUCCESS,
@@ -429,7 +411,6 @@ async def _step_aod_aam_handoff(
             headers=_json_headers(),
             params={
                 "aod_discovery_id": aod_discovery_id,
-                "source_aod_discovery_id": aod_discovery_id,
                 "status_filter": "all",
                 **({"tenant_id": tenant_id} if tenant_id else {}),
                 **({"entity_id": entity_id} if entity_id else {}),
@@ -450,13 +431,9 @@ async def _step_aod_aam_handoff(
 
     if resp.status_code == 200:
         data = resp.json()
-        # Capture namespaced ID from handoff
         handoff_id = data.get("handoff_id")
         if handoff_id:
             context["handoff_id"] = handoff_id
-        source_aod = data.get("source_aod_discovery_id")
-        if source_aod:
-            context["source_aod_discovery_id"] = source_aod
         candidates = data.get("candidates_sent", data.get("count", "?"))
         _mark_step(step, StepStatus.SUCCESS,
                    f"Exported {candidates} candidates to AAM",
@@ -1411,14 +1388,9 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
                 context["farm_manifest_id"] = s.data["farm_manifest_id"]
             elif "snapshot_id" in s.data:
                 context["farm_manifest_id"] = s.data["snapshot_id"]
-            # Farm snapshot identity: SE promotes to canonical, ME keeps as provenance.
             if s.name == "farm_snapshot":
-                if "tenant_id" in s.data:
-                    context["farm_snapshot_tenant_id"] = s.data["tenant_id"]
-                if "entity_id" in s.data:
-                    context["farm_snapshot_entity_id"] = s.data["entity_id"]
-                    if job.pipeline_mode == PipelineMode.SE:
-                        context["entity_id"] = s.data["entity_id"]
+                if job.pipeline_mode == PipelineMode.SE and "entity_id" in s.data:
+                    context["entity_id"] = s.data["entity_id"]
             else:
                 if "tenant_id" in s.data:
                     context["tenant_id"] = s.data["tenant_id"]
