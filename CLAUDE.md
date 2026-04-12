@@ -418,6 +418,15 @@ Do not bypass with `--no-verify` (C13).
 
 ---
 
+# Branch hygiene (B17)
+
+- Feature branches are merged to dev and deleted in the same session they are created.
+- Unmerged branches at session end are a B17 failure and must be reported.
+- `--no-verify` is banned. If a hook blocks a legitimate change, fix the hook scope, then commit.
+- Session start: run `git fetch --all --prune && git branch -a` and report stale branches before new work.
+
+---
+
 # Repo-Specific Guardrails — Console
 
 ## Identity
