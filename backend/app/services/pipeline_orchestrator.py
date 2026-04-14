@@ -1448,12 +1448,17 @@ async def _step_convergence_surfaces_visible(
         "past_runs": len(history),
     })
 
-    # 4. Reports P&L Combined tab
+    # 4. Reports P&L Combined tab.
+    # is_active=true fallback — ME ingests span multiple convergence_ingest_ids
+    # (one per entity), so no single run_id covers the combined payload.
+    # Convergence's v2_helpers.py documents this: passing pipeline_run_id=None
+    # switches the resolver from run_id scoping to is_active=true filtering,
+    # which is exactly what Reports surfaces use by default.
     pnl_endpoint = (f"{convergence_url}/api/convergence/reports/v2/"
                     f"combining/income-statement")
     try:
         pnl = await convergence_client.get_pnl_income_statement(
-            tenant_id=tenant_id, pipeline_run_id=pipeline_run_id)
+            tenant_id=tenant_id)
     except httpx.ConnectError:
         _fail("Reports P&L Combined", pnl_endpoint, "connection refused")
         return
@@ -1479,12 +1484,12 @@ async def _step_convergence_surfaces_visible(
         "combined_concepts": sorted(combined_pnl.keys())[:10],
     })
 
-    # 5. Reports QofE tab
+    # 5. Reports QofE tab — same is_active=true fallback rationale as P&L above.
     qoe_endpoint = (f"{convergence_url}/api/convergence/reports/v2/"
                     f"qoe/combined")
     try:
         qoe = await convergence_client.get_qoe_combined(
-            tenant_id=tenant_id, pipeline_run_id=pipeline_run_id)
+            tenant_id=tenant_id)
     except httpx.ConnectError:
         _fail("Reports QofE", qoe_endpoint, "connection refused")
         return

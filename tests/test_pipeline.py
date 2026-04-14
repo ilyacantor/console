@@ -254,9 +254,14 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
             })
         return httpx.Response(404, json={"detail": "not found"})
 
+    pnl_qoe_params: list[dict] = []
+
     async def mock_get(url, **kwargs):
         if "/api/dcl/triples/overview" in url:
             return _dcl_overview_response()
+        if ("reports/v2/combining/income-statement" in url
+                or "reports/v2/qoe/combined" in url):
+            pnl_qoe_params.append(dict(kwargs.get("params") or {}))
         # Verify-step endpoints (must be checked before generic /engagements/ match)
         if (m := _verify_convergence_get_mock(url, engagement_id="eng-conv-1")) is not None:
             return m
@@ -313,6 +318,19 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
     assert verify_step["data"]["engagement_id"] == "eng-conv-1"
     assert verify_step["data"]["run_name"]
     assert len(verify_step["data"]["checks"]) == 5
+
+    # Lock-in: Reports P&L + QoE calls must NOT send pipeline_run_id.
+    # ME ingests span multiple convergence_ingest_ids (one per entity), so
+    # no single run_id covers combined surfaces. is_active=true fallback is
+    # the correct filter (see Convergence v2_helpers.py:36-43).
+    assert len(pnl_qoe_params) == 2, (
+        f"expected 2 Reports calls (P&L + QoE), got {len(pnl_qoe_params)}"
+    )
+    for p in pnl_qoe_params:
+        assert "pipeline_run_id" not in p, (
+            f"verify step must not scope Reports by pipeline_run_id — "
+            f"breaks multi-batch ME. got params={p}"
+        )
 
 
 @patch("backend.app.services.pipeline_orchestrator.db")
