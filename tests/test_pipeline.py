@@ -36,10 +36,104 @@ def _make_mock_client(post_fn, get_fn):
     return mock_client
 
 
+def _json_response(url: str, method: str, status: int, payload) -> httpx.Response:
+    """Build a mock httpx.Response with a bound request so raise_for_status() works."""
+    return httpx.Response(
+        status,
+        json=payload,
+        request=httpx.Request(method, url),
+    )
+
+
+def _verify_nlq_get_mock(url: str):
+    """Success response for NLQ verify step GETs. Returns None if no match."""
+    if "/api/v1/pipeline/status" in url:
+        return _json_response(url, "GET", 200, {
+            "dcl_connected": True,
+            "metric_count": 12,
+            "last_dcl_ingest_id": "dcl-ingest-001",
+        })
+    if "/api/v1/schema" in url:
+        return _json_response(url, "GET", 200, {
+            "metrics": ["revenue", "ebitda", "net_income"],
+            "periods": ["2025-Q1", "2025-Q2"],
+        })
+    return None
+
+
+def _verify_nlq_post_mock(url: str):
+    """Success response for NLQ verify step POST /query. Returns None if no match."""
+    if "/api/v1/query" in url:
+        return _json_response(url, "POST", 200, {
+            "success": True,
+            "data_source": "dcl",
+            "value": 1_234_567.89,
+            "answer": "$1.23M",
+        })
+    return None
+
+
+def _verify_convergence_get_mock(url: str, *, engagement_id: str):
+    """Success responses for Convergence verify step GETs. Returns None if no match.
+
+    Order matters — /engagements/active and /engagements/{id}/runs must be checked
+    before any generic /engagements/ prefix matcher in the caller.
+    """
+    if "/api/convergence/merge/overview" in url:
+        return _json_response(url, "GET", 200, {
+            "overview": {"entities": [
+                {"entity_id": "test-entity-a"},
+                {"entity_id": "test-entity-b"},
+            ]},
+            "financial_summary": [
+                {"concept": "Revenue", "acquirer": 1000000, "target": 500000},
+            ],
+            "comparison": {"concepts": ["Revenue", "EBITDA"]},
+        })
+    if "/api/convergence/engagements/active" in url:
+        return _json_response(url, "GET", 200, {
+            "engagement_id": engagement_id,
+            "short_name": "TstAB",
+            "state": "active",
+        })
+    if f"/api/convergence/engagements/{engagement_id}/runs" in url:
+        return _json_response(url, "GET", 200, [
+            {"pipeline_run_id": "run-001", "run_name": "TstAB-abcd"},
+        ])
+    if "/api/convergence/reports/v2/combining/income-statement" in url:
+        return _json_response(url, "GET", 200, {
+            "tenant_id": "test-tenant",
+            "engagement_id": engagement_id,
+            "combined": {
+                "revenue": 1500000,
+                "cogs": 500000,
+                "ebitda": 300000,
+                "net_income": 200000,
+            },
+            "adjustments": {"revenue": 0, "cogs": 0},
+        })
+    if "/api/convergence/reports/v2/qoe/combined" in url:
+        return _json_response(url, "GET", 200, {
+            "tenant_id": "test-tenant",
+            "engagement_id": engagement_id,
+            "combined": {
+                "reported_ebitda": 300000,
+                "adjusted_ebitda": 315000,
+                "revenue_quality": "A",
+            },
+            "bridge": {
+                "reported_ebitda": 300000,
+                "adjustments": [],
+                "adjusted_ebitda": 315000,
+            },
+        })
+    return None
+
+
 @patch("backend.app.services.pipeline_orchestrator.db")
 @patch("backend.app.services.pipeline_orchestrator.httpx.AsyncClient")
 def test_run_se_pipeline(mock_client_cls, mock_db):
-    """SE pipeline runs 6 steps: snapshot → AOD discovery → handoff → AAM → financials → complete."""
+    """SE pipeline runs 7 steps: snapshot → AOD discovery → handoff → AAM → financials → nlq_data_visible → complete."""
 
     async def mock_post(url, **kwargs):
         if "/api/snapshots" in url:
@@ -61,9 +155,13 @@ def test_run_se_pipeline(mock_client_cls, mock_db):
             })
         if "/api/farm/manifest-intake" in url:
             return _farm_manifest_response()
+        if (m := _verify_nlq_post_mock(url)) is not None:
+            return m
         return httpx.Response(404, json={"detail": "not found"})
 
     async def mock_get(url, **kwargs):
+        if (m := _verify_nlq_get_mock(url)) is not None:
+            return m
         return httpx.Response(404, json={"detail": "not found"})
 
     mock_client = _make_mock_client(mock_post, mock_get)
@@ -85,7 +183,7 @@ def test_run_se_pipeline(mock_client_cls, mock_db):
 
     assert data["pipeline_mode"] == "se"
     assert data["status"] == "completed"
-    assert len(data["steps"]) == 6
+    assert len(data["steps"]) == 7
 
     # Verify pipeline_run_id is a full UUID (36 chars with hyphens)
     assert len(data["pipeline_run_id"]) == 36
@@ -100,8 +198,17 @@ def test_run_se_pipeline(mock_client_cls, mock_db):
     assert data["steps"][1]["status"] == "success"
     assert data["steps"][4]["name"] == "farm_financials"
     assert data["steps"][4]["status"] == "success"
-    assert data["steps"][5]["name"] == "complete"
+    assert data["steps"][5]["name"] == "nlq_data_visible"
     assert data["steps"][5]["status"] == "success"
+    assert data["steps"][6]["name"] == "complete"
+    assert data["steps"][6]["status"] == "success"
+
+    # Verify step.data carries provenance (I2: identity pair required)
+    verify_step = data["steps"][5]
+    assert verify_step["data"]["tenant_id"]
+    assert verify_step["data"]["entity_id"]
+    assert verify_step["data"]["run_name"]
+    assert len(verify_step["data"]["checks"]) == 3
 
     for step in data["steps"]:
         assert step["duration_ms"] is not None
@@ -111,7 +218,7 @@ def test_run_se_pipeline(mock_client_cls, mock_db):
 @patch("backend.app.services.pipeline_orchestrator.db")
 @patch("backend.app.services.pipeline_orchestrator.httpx.AsyncClient")
 def test_run_me_pipeline(mock_client_cls, mock_db):
-    """ME pipeline runs 6 steps: financials A∥B → overlay → COFA → verify → complete."""
+    """ME pipeline runs 7 steps: financials A∥B → overlay → COFA → verify → convergence_surfaces_visible → complete."""
 
     async def mock_post(url, **kwargs):
         if "/api/farm/manifest-intake" in url:
@@ -150,6 +257,9 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
     async def mock_get(url, **kwargs):
         if "/api/dcl/triples/overview" in url:
             return _dcl_overview_response()
+        # Verify-step endpoints (must be checked before generic /engagements/ match)
+        if (m := _verify_convergence_get_mock(url, engagement_id="eng-conv-1")) is not None:
+            return m
         if "/api/convergence/engagements/eng-conv-1" in url:
             return httpx.Response(200, json={
                 "engagement_id": "eng-conv-1",
@@ -181,7 +291,7 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
 
     assert data["pipeline_mode"] == "me"
     assert data["status"] == "completed"
-    assert len(data["steps"]) == 6
+    assert len(data["steps"]) == 7
 
     # Verify pipeline_run_id is a full UUID
     assert len(data["pipeline_run_id"]) == 36
@@ -191,10 +301,18 @@ def test_run_me_pipeline(mock_client_cls, mock_db):
     assert data["steps"][2]["name"] == "convergence_overlay"
     assert data["steps"][3]["name"] == "cofa_unification"
     assert data["steps"][4]["name"] == "verify"
-    assert data["steps"][5]["name"] == "complete"
+    assert data["steps"][5]["name"] == "convergence_surfaces_visible"
+    assert data["steps"][6]["name"] == "complete"
 
     for step in data["steps"]:
         assert step["status"] == "success"
+
+    # Verify step.data carries provenance (I2: identity pair + engagement)
+    verify_step = data["steps"][5]
+    assert verify_step["data"]["tenant_id"]
+    assert verify_step["data"]["engagement_id"] == "eng-conv-1"
+    assert verify_step["data"]["run_name"]
+    assert len(verify_step["data"]["checks"]) == 5
 
 
 @patch("backend.app.services.pipeline_orchestrator.db")
@@ -237,6 +355,10 @@ def test_me_pipeline_uses_convergence_engagement(mock_client_cls, mock_db):
         return httpx.Response(404, json={"detail": "not found"})
 
     async def mock_get(url, **kwargs):
+        # Verify-step endpoints (must be checked before generic /engagements/ match)
+        if (m := _verify_convergence_get_mock(
+                url, engagement_id="conv-eng-id-123")) is not None:
+            return m
         if "/api/convergence/engagements/" in url:
             return httpx.Response(200, json={
                 "engagement_id": "conv-eng-id-123",
@@ -431,9 +553,13 @@ def test_se_pipeline_threads_namespaced_ids(mock_client_cls, mock_db):
         if "/api/farm/manifest-intake" in url:
             captured_bodies["financials"] = body
             return _farm_manifest_response()
+        if (m := _verify_nlq_post_mock(url)) is not None:
+            return m
         return httpx.Response(404, json={"detail": "not found"})
 
     async def mock_get(url, **kwargs):
+        if (m := _verify_nlq_get_mock(url)) is not None:
+            return m
         return httpx.Response(404, json={"detail": "not found"})
 
     mock_client = _make_mock_client(mock_post, mock_get)
@@ -504,6 +630,9 @@ def test_cofa_sends_pipeline_run_id_to_convergence(mock_client_cls, mock_db):
         return httpx.Response(404, json={"detail": "not found"})
 
     async def mock_get(url, **kwargs):
+        # Verify-step endpoints (must be checked before generic /engagements/ match)
+        if (m := _verify_convergence_get_mock(url, engagement_id="eng-conv-1")) is not None:
+            return m
         if "/api/convergence/engagements/eng-conv-1" in url:
             return httpx.Response(200, json={
                 "engagement_id": "eng-conv-1",

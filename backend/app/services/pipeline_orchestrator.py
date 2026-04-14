@@ -27,6 +27,7 @@ from backend.app.models.pipeline import (
     PipelineStep,
     StepStatus,
 )
+from backend.app.services import convergence_client, nlq_client
 
 logger = logging.getLogger("console.pipeline")
 
@@ -119,6 +120,9 @@ def create_se_steps() -> list[PipelineStep]:
                      message="Infer pipe definitions"),
         PipelineStep(name="farm_financials", display_name="DCL Ingest",
                      message="Generate financial triples"),
+        PipelineStep(name="nlq_data_visible",
+                     display_name="Verify Data in Ask & Dashboards",
+                     message="Confirm NLQ can query and render the new data"),
         PipelineStep(name="complete", display_name="Pipeline Complete",
                      message="Summarize pipeline run"),
     ]
@@ -141,6 +145,9 @@ def create_me_steps() -> list[PipelineStep]:
                      message="Unify charts of accounts via Convergence"),
         PipelineStep(name="verify", display_name="Verify",
                      message="Verify COFA output"),
+        PipelineStep(name="convergence_surfaces_visible",
+                     display_name="Verify Merge, Engagements, Reports",
+                     message="Confirm Convergence surfaces can render the new data"),
         PipelineStep(name="complete", display_name="Pipeline Complete",
                      message="Summarize pipeline run"),
     ]
@@ -197,6 +204,10 @@ async def _execute_step(
             await _step_cofa_unification(client, step, job, context, t0)
         elif step.name == "verify":
             await _step_verify(client, step, job, context, t0)
+        elif step.name == "nlq_data_visible":
+            await _step_nlq_data_visible(client, step, job, context, t0)
+        elif step.name == "convergence_surfaces_visible":
+            await _step_convergence_surfaces_visible(client, step, job, context, t0)
         elif step.name == "complete":
             _step_complete(step, job, context, t0)
         else:
@@ -1064,6 +1075,453 @@ async def _step_verify(
     _mark_step(step, StepStatus.SUCCESS,
                f"Verify complete — verify_id={verify_id}",
                data=data, start_time=t0)
+
+
+async def _step_nlq_data_visible(
+    client: httpx.AsyncClient,
+    step: PipelineStep,
+    job: PipelineJob,
+    context: dict[str, Any],
+    t0: float,
+) -> None:
+    """Post-SE check: confirm NLQ can see and query the freshly ingested data.
+
+    Hits three NLQ endpoints in sequence. Fails loud with a plain-English
+    message naming the surface that broke. Provenance (tenant_id, entity_id,
+    run_name, dcl_ingest_id) is embedded in step.data for the Pipeline UI's
+    StepDetail renderer.
+    """
+    url = _require_url("NLQ_BASE_URL", config.NLQ_BASE_URL,
+                       "Verify Data in Ask & Dashboards")
+
+    tenant_id = context.get("tenant_id")
+    entity_id = context.get("entity_id")
+    run_name = job.run_name
+    dcl_ingest_id = context.get("dcl_ingest_id")
+
+    if not tenant_id or not entity_id:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Cannot verify NLQ — identity pair missing "
+                   f"(tenant_id={tenant_id!r}, entity_id={entity_id!r}, "
+                   f"run_name={run_name!r}). Earlier pipeline steps must "
+                   f"populate both before verification can run.",
+                   start_time=t0)
+        return
+
+    details: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "entity_id": entity_id,
+        "run_name": run_name,
+        "dcl_ingest_id": dcl_ingest_id,
+        "nlq_base_url": url,
+        "checks": [],
+    }
+
+    # 1. Pipeline status — confirms NLQ reached DCL and has metrics for dashboards
+    try:
+        status = await nlq_client.pipeline_status(client)
+    except httpx.ConnectError:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ pipeline status unreachable at "
+                   f"{url}/api/v1/pipeline/status — connection refused. "
+                   f"Verify NLQ is running on port 8005. "
+                   f"run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+    except httpx.TimeoutException as e:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ pipeline status timed out at "
+                   f"{url}/api/v1/pipeline/status — {e}. "
+                   f"run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+    except httpx.HTTPStatusError as e:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ pipeline status returned HTTP "
+                   f"{e.response.status_code} at "
+                   f"{url}/api/v1/pipeline/status: "
+                   f"{_extract_error(e.response)}. "
+                   f"run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+
+    dcl_connected = bool(status.get("dcl_connected"))
+    metric_count = int(status.get("metric_count") or 0)
+    details["checks"].append({
+        "surface": "Dashboards",
+        "endpoint": f"{url}/api/v1/pipeline/status",
+        "dcl_connected": dcl_connected,
+        "metric_count": metric_count,
+        "last_dcl_ingest_id": status.get("last_dcl_ingest_id"),
+    })
+
+    if not dcl_connected:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ cannot reach DCL — Dashboards will render empty. "
+                   f"pipeline/status returned dcl_connected=false. "
+                   f"run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+
+    if metric_count == 0:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ catalog has zero metrics — Dashboards would render "
+                   f"empty even though DCL is reachable. Expected DCL ingest "
+                   f"to publish at least one metric. run={run_name}, "
+                   f"entity={entity_id}, "
+                   f"last_dcl_ingest_id={status.get('last_dcl_ingest_id')}",
+                   data=details, start_time=t0)
+        return
+
+    # 2. Schema — Dashboards use this for metric/period pickers
+    try:
+        schema = await nlq_client.schema(client)
+    except httpx.ConnectError:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ schema unreachable at {url}/api/v1/schema — "
+                   f"connection refused. run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+    except httpx.HTTPStatusError as e:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ schema returned HTTP {e.response.status_code} at "
+                   f"{url}/api/v1/schema: {_extract_error(e.response)}. "
+                   f"run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+
+    metrics = schema.get("metrics") or []
+    periods = schema.get("periods") or []
+    details["checks"].append({
+        "surface": "Dashboards/schema",
+        "endpoint": f"{url}/api/v1/schema",
+        "metric_count": len(metrics),
+        "period_count": len(periods),
+    })
+
+    if not metrics:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ schema has no metrics — Dashboards cannot render "
+                   f"any widget. run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+
+    # 3. Canonical Ask query — generic phrasing (F1 hook: no entity names
+    # hardcoded). entity_id is passed as a structured field from pipeline
+    # context, so NLQ can resolve which entity's data to return.
+    question = "what was total revenue in the most recent period"
+    try:
+        result = await nlq_client.query(client, question, entity_id=entity_id)
+    except httpx.ConnectError:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ Ask query unreachable at {url}/api/v1/query — "
+                   f"connection refused. run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+    except httpx.TimeoutException as e:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ Ask query timed out at {url}/api/v1/query — {e}. "
+                   f"run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+    except httpx.HTTPStatusError as e:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ Ask returned HTTP {e.response.status_code} at "
+                   f"{url}/api/v1/query for {question!r}: "
+                   f"{_extract_error(e.response)}. "
+                   f"run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+
+    ask_success = bool(result.get("success"))
+    data_source = result.get("data_source")
+    value = result.get("value")
+    details["checks"].append({
+        "surface": "Ask",
+        "endpoint": f"{url}/api/v1/query",
+        "question": question,
+        "success": ask_success,
+        "data_source": data_source,
+        "value": value,
+    })
+
+    if not ask_success:
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ Ask returned success=false for {question!r} — "
+                   f"answer={result.get('answer')!r}. "
+                   f"Users would see no data in Ask. "
+                   f"run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+
+    if not isinstance(data_source, str) or not data_source.startswith("dcl"):
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ Ask answered from data_source={data_source!r} "
+                   f"instead of 'dcl*' — this is not the freshly ingested "
+                   f"pipeline data. run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+
+    if value is None or not isinstance(value, (int, float)):
+        _mark_step(step, StepStatus.FAILED,
+                   f"NLQ Ask returned success=true but value={value!r} is "
+                   f"not numeric — Ask surface cannot render a figure. "
+                   f"run={run_name}, entity={entity_id}",
+                   data=details, start_time=t0)
+        return
+
+    _mark_step(step, StepStatus.SUCCESS,
+               f"Data visible in NLQ — Ask answered {value!r} from DCL, "
+               f"Dashboards catalog has {metric_count} metric(s). "
+               f"run={run_name}",
+               data=details, start_time=t0)
+
+
+async def _step_convergence_surfaces_visible(
+    client: httpx.AsyncClient,
+    step: PipelineStep,
+    job: PipelineJob,
+    context: dict[str, Any],
+    t0: float,
+) -> None:
+    """Post-ME check: confirm Merge, Engagements, and Reports surfaces are
+    healthy for the freshly ingested engagement. Plain-English failure
+    messages carry the surface name, endpoint, and full provenance.
+    """
+    convergence_url = _require_url(
+        "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL,
+        "Verify Merge, Engagements, Reports")
+
+    tenant_id = context.get("tenant_id")
+    engagement_id = context.get("convergence_engagement_id")
+    run_name = job.run_name
+    pipeline_run_id = context.get("pipeline_run_id", job.pipeline_run_id)
+
+    cfg = job.config
+    acq_entity = (cfg.get("farm_config_a") or {}).get("entity_id")
+    tgt_entity = (cfg.get("farm_config_b") or {}).get("entity_id")
+
+    if not tenant_id or not engagement_id:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Cannot verify Convergence surfaces — identity missing "
+                   f"(tenant_id={tenant_id!r}, "
+                   f"engagement_id={engagement_id!r}, "
+                   f"run_name={run_name!r}). ME pre-flight must populate "
+                   f"both before verification.",
+                   start_time=t0)
+        return
+
+    if not acq_entity or not tgt_entity:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Cannot verify Convergence surfaces — entity pair "
+                   f"missing (acquirer={acq_entity!r}, "
+                   f"target={tgt_entity!r}). ME pre-flight must populate "
+                   f"farm_config_a/b.entity_id before verification.",
+                   start_time=t0)
+        return
+
+    details: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "engagement_id": engagement_id,
+        "run_name": run_name,
+        "pipeline_run_id": pipeline_run_id,
+        "acquirer_entity_id": acq_entity,
+        "target_entity_id": tgt_entity,
+        "convergence_base_url": convergence_url,
+        "checks": [],
+    }
+
+    def _fail(surface: str, endpoint: str, reason: str) -> None:
+        details["checks"].append({
+            "surface": surface,
+            "endpoint": endpoint,
+            "status": "failed",
+            "reason": reason,
+        })
+        _mark_step(step, StepStatus.FAILED,
+                   f"{surface} would fail for users — {reason}. "
+                   f"endpoint={endpoint}. run={run_name}, "
+                   f"engagement={engagement_id}",
+                   data=details, start_time=t0)
+
+    # 1. Merge overview — must return ≥2 entities with financial summary
+    merge_endpoint = f"{convergence_url}/api/convergence/merge/overview"
+    try:
+        merge = await convergence_client.get_merge_overview(
+            acquirer_id=acq_entity, target_id=tgt_entity)
+    except httpx.ConnectError:
+        _fail("Merge", merge_endpoint, "connection refused")
+        return
+    except httpx.TimeoutException as e:
+        _fail("Merge", merge_endpoint, f"request timed out — {e}")
+        return
+    except httpx.HTTPStatusError as e:
+        _fail("Merge", merge_endpoint,
+              f"HTTP {e.response.status_code}: "
+              f"{_extract_error(e.response)}")
+        return
+
+    overview = merge.get("overview") or {}
+    entities = overview.get("entities") or []
+    financial_summary = merge.get("financial_summary") or []
+    if len(entities) < 2:
+        _fail("Merge", merge_endpoint,
+              f"expected ≥2 entities in overview, got {len(entities)} "
+              f"({[e.get('entity_id') for e in entities]}) — "
+              f"page would show 'need at least 2 entities' error")
+        return
+    if not financial_summary:
+        _fail("Merge", merge_endpoint,
+              "financial_summary is empty — Merge page would render with "
+              "no revenue/EBITDA figures")
+        return
+    details["checks"].append({
+        "surface": "Merge",
+        "endpoint": merge_endpoint,
+        "entities": [e.get("entity_id") for e in entities],
+        "financial_summary_rows": len(financial_summary),
+    })
+
+    # 2. Active engagement — Engagements page primary call
+    active_endpoint = (f"{convergence_url}/api/convergence/engagements/active"
+                       f"?tenant_id={tenant_id}")
+    try:
+        active = await convergence_client.get_active_engagement(tenant_id)
+    except httpx.ConnectError:
+        _fail("Engagements", active_endpoint, "connection refused")
+        return
+    except httpx.TimeoutException as e:
+        _fail("Engagements", active_endpoint, f"request timed out — {e}")
+        return
+    except httpx.HTTPStatusError as e:
+        _fail("Engagements", active_endpoint,
+              f"HTTP {e.response.status_code}: "
+              f"{_extract_error(e.response)}")
+        return
+
+    if not active:
+        _fail("Engagements", active_endpoint,
+              f"no active engagement for tenant — page would show empty "
+              f"state even though run just completed for "
+              f"engagement_id={engagement_id}")
+        return
+    active_eid = str(active.get("engagement_id") or "")
+    if active_eid != engagement_id:
+        _fail("Engagements", active_endpoint,
+              f"active engagement is {active_eid!r}, expected "
+              f"{engagement_id!r} — Engagements page would show the wrong "
+              f"engagement as active")
+        return
+    details["checks"].append({
+        "surface": "Engagements/active",
+        "endpoint": active_endpoint,
+        "active_engagement_id": active_eid,
+    })
+
+    # 3. Engagement history — past runs list
+    history_endpoint = (f"{convergence_url}/api/convergence/engagements/"
+                        f"{engagement_id}/runs")
+    try:
+        history = await convergence_client.get_engagement_history(
+            engagement_id)
+    except httpx.ConnectError:
+        _fail("Engagements", history_endpoint, "connection refused")
+        return
+    except httpx.TimeoutException as e:
+        _fail("Engagements", history_endpoint, f"request timed out — {e}")
+        return
+    except httpx.HTTPStatusError as e:
+        _fail("Engagements", history_endpoint,
+              f"HTTP {e.response.status_code}: "
+              f"{_extract_error(e.response)}")
+        return
+
+    if not history:
+        _fail("Engagements", history_endpoint,
+              f"no past runs returned for engagement_id={engagement_id} — "
+              f"Engagements page 'past runs' section would be empty even "
+              f"though this run just completed")
+        return
+    details["checks"].append({
+        "surface": "Engagements/runs",
+        "endpoint": history_endpoint,
+        "past_runs": len(history),
+    })
+
+    # 4. Reports P&L Combined tab
+    pnl_endpoint = (f"{convergence_url}/api/convergence/reports/v2/"
+                    f"combining/income-statement")
+    try:
+        pnl = await convergence_client.get_pnl_income_statement(
+            tenant_id=tenant_id, pipeline_run_id=pipeline_run_id)
+    except httpx.ConnectError:
+        _fail("Reports P&L Combined", pnl_endpoint, "connection refused")
+        return
+    except httpx.TimeoutException as e:
+        _fail("Reports P&L Combined", pnl_endpoint,
+              f"request timed out — {e}")
+        return
+    except httpx.HTTPStatusError as e:
+        _fail("Reports P&L Combined", pnl_endpoint,
+              f"HTTP {e.response.status_code}: "
+              f"{_extract_error(e.response)}")
+        return
+
+    combined_pnl = pnl.get("combined")
+    if not isinstance(combined_pnl, dict) or not combined_pnl:
+        _fail("Reports P&L Combined", pnl_endpoint,
+              f"'combined' payload missing or empty — P&L Combined tab "
+              f"would render empty. keys={sorted(pnl.keys())[:10]}")
+        return
+    details["checks"].append({
+        "surface": "Reports P&L Combined",
+        "endpoint": pnl_endpoint,
+        "combined_concepts": sorted(combined_pnl.keys())[:10],
+    })
+
+    # 5. Reports QofE tab
+    qoe_endpoint = (f"{convergence_url}/api/convergence/reports/v2/"
+                    f"qoe/combined")
+    try:
+        qoe = await convergence_client.get_qoe_combined(
+            tenant_id=tenant_id, pipeline_run_id=pipeline_run_id)
+    except httpx.ConnectError:
+        _fail("Reports QofE", qoe_endpoint, "connection refused")
+        return
+    except httpx.TimeoutException as e:
+        _fail("Reports QofE", qoe_endpoint, f"request timed out — {e}")
+        return
+    except httpx.HTTPStatusError as e:
+        _fail("Reports QofE", qoe_endpoint,
+              f"HTTP {e.response.status_code}: "
+              f"{_extract_error(e.response)}")
+        return
+
+    # QofE response shape: combined dict (per-entity QoE payload) + bridge
+    # dict (adjustments). Either being populated is enough to render the tab.
+    combined_qoe = qoe.get("combined")
+    bridge_qoe = qoe.get("bridge")
+    has_combined = isinstance(combined_qoe, dict) and bool(combined_qoe)
+    has_bridge = isinstance(bridge_qoe, dict) and bool(bridge_qoe)
+    if not has_combined and not has_bridge:
+        _fail("Reports QofE", qoe_endpoint,
+              f"neither 'combined' nor 'bridge' payload is populated — "
+              f"QofE tab would render empty. keys={sorted(qoe.keys())}")
+        return
+    details["checks"].append({
+        "surface": "Reports QofE",
+        "endpoint": qoe_endpoint,
+        "combined_keys": sorted(combined_qoe.keys())[:10] if has_combined else [],
+        "bridge_keys": sorted(bridge_qoe.keys())[:10] if has_bridge else [],
+    })
+
+    _mark_step(step, StepStatus.SUCCESS,
+               f"Convergence surfaces verified — Merge ({len(entities)} "
+               f"entities), Engagements ({len(history)} past runs), "
+               f"P&L Combined ({len(combined_pnl)} concepts), QofE "
+               f"(combined={has_combined}, bridge={has_bridge}). "
+               f"run={run_name}",
+               data=details, start_time=t0)
 
 
 def _step_complete(
