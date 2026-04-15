@@ -41,10 +41,10 @@ async def create_engagement(body: EngagementCreate):
 
 
 @router.get("")
-async def list_engagements():
-    """List all engagements from Convergence."""
+async def list_engagements(lifecycle_stage: str | None = None):
+    """List engagements from Convergence, optionally filtered by lifecycle_stage."""
     try:
-        rows = await convergence_client.list_engagements()
+        rows = await convergence_client.list_engagements(lifecycle_stage=lifecycle_stage)
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except httpx.HTTPError as e:

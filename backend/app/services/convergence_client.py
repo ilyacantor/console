@@ -44,14 +44,20 @@ async def get_engagement(engagement_id: str) -> dict | None:
         return resp.json()
 
 
-async def list_engagements(tenant_id: str | None = None) -> list[dict]:
+async def list_engagements(
+    tenant_id: str | None = None,
+    lifecycle_stage: str | None = None,
+) -> list[dict]:
     tid = tenant_id or os.environ.get("AOS_TENANT_ID")
     if not tid:
         raise RuntimeError("No tenant_id and AOS_TENANT_ID not set")
+    params: dict[str, str] = {"tenant_id": tid}
+    if lifecycle_stage:
+        params["lifecycle_stage"] = lifecycle_stage
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.get(
             f"{CONVERGENCE_BASE_URL}/api/convergence/engagements",
-            params={"tenant_id": tid},
+            params=params,
         )
         resp.raise_for_status()
         return resp.json()

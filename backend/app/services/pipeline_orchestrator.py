@@ -1672,6 +1672,13 @@ async def _me_preflight(
 
     eng = resp.json()
 
+    lifecycle_stage = eng.get("lifecycle_stage")
+    if lifecycle_stage != "active":
+        raise RuntimeError(
+            f"ME pre-flight — engagement {engagement_id} is not runnable: "
+            f"lifecycle_stage={lifecycle_stage!r} (must be 'active'). "
+            f"Only active engagements can run the ME pipeline.")
+
     # Populate context from Convergence engagement
     context["convergence_engagement_id"] = str(eng["engagement_id"])
     short_name = eng.get("short_name") or eng.get("engagement_short_name", "")

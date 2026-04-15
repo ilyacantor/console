@@ -198,9 +198,12 @@ export interface ConvergenceEngagement {
   created_at: string | null
 }
 
-export async function fetchConvergenceEngagements(): Promise<ConvergenceEngagement[]> {
+export async function fetchConvergenceEngagements(
+  lifecycleStage?: string,
+): Promise<ConvergenceEngagement[]> {
+  const qs = lifecycleStage ? `?lifecycle_stage=${encodeURIComponent(lifecycleStage)}` : ''
   const data = await fetchJSON<{ engagements: ConvergenceEngagement[] }>(
-    '/api/engagements',
+    `/api/engagements${qs}`,
   )
   return data.engagements
 }
