@@ -52,7 +52,7 @@ test.describe('Operator Feed — page structure', () => {
 test.describe('Operator Feed — sidebar navigation', () => {
   test('Operator Feed nav item exists and navigates correctly', async ({ page }) => {
     await page.goto('/pipeline')
-    const sidebar = page.locator('aside').first()
+    const sidebar = page.locator('nav').first()
     const navLink = sidebar.getByText('Operator Feed')
     await expect(navLink).toBeVisible()
     await navLink.click()
