@@ -64,6 +64,20 @@ async def _ensure_schema() -> None:
 
     async with _pool.acquire() as conn:
         await conn.execute("CREATE SCHEMA IF NOT EXISTS console")
+        # Brain-A Part 2b: rename legacy console.maestra_runs -> console.mai_runs.
+        # Idempotent: guarded by existence check on the OLD name. Must run before
+        # CREATE TABLE IF NOT EXISTS mai_runs below, otherwise both tables coexist.
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_tables
+                    WHERE schemaname = 'console' AND tablename = 'maestra_runs'
+                ) THEN
+                    ALTER TABLE console.maestra_runs RENAME TO mai_runs;
+                END IF;
+            END $$;
+        """)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS console.pipeline_runs (
                 run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -121,7 +135,7 @@ async def _ensure_schema() -> None:
             )
         """)
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS console.maestra_runs (
+            CREATE TABLE IF NOT EXISTS console.mai_runs (
                 run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 engagement_id UUID,
                 step_name VARCHAR(100) NOT NULL,
@@ -229,7 +243,7 @@ async def _seed_config() -> None:
             )
 
     await _seed_change_events()
-    await _seed_maestra_runs()
+    await _seed_mai_runs()
     await _seed_narrative()
 
 
@@ -622,15 +636,15 @@ async def get_last_cron_runs() -> dict[str, str | None]:
         }
 
 
-# --- Maestra runs ---
+# --- Mai runs ---
 
 
-async def get_maestra_runs(
+async def get_mai_runs(
     engagement_id: str | None = None,
     step_name: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Query maestra runs with optional filters."""
+    """Query mai runs with optional filters."""
     if not _pool:
         return []
 
@@ -656,7 +670,7 @@ async def get_maestra_runs(
             SELECT run_id, engagement_id, step_name, run_tag, model_version,
                    constitution_version, duration_s, tokens_in, tokens_out,
                    cost_usd, status, error_detail, created_at
-            FROM console.maestra_runs
+            FROM console.mai_runs
             {where}
             ORDER BY created_at DESC
             LIMIT ${idx}
@@ -665,7 +679,7 @@ async def get_maestra_runs(
         )
         return [
             {
-                "maestra_run_id": str(r["run_id"]),
+                "mai_run_id": str(r["run_id"]),
                 "engagement_id": str(r["engagement_id"]) if r["engagement_id"] else None,
                 "step_name": r["step_name"],
                 "run_tag": r["run_tag"],
@@ -683,8 +697,8 @@ async def get_maestra_runs(
         ]
 
 
-async def get_maestra_summary(engagement_id: str | None = None) -> dict[str, Any]:
-    """Aggregate maestra run stats."""
+async def get_mai_summary(engagement_id: str | None = None) -> dict[str, Any]:
+    """Aggregate mai run stats."""
     if not _pool:
         return {"total_runs": 0, "total_tokens": 0, "total_cost": 0.0, "avg_duration_s": 0.0}
 
@@ -702,7 +716,7 @@ async def get_maestra_summary(engagement_id: str | None = None) -> dict[str, Any
                 COALESCE(SUM(tokens_in + tokens_out), 0) as total_tokens,
                 COALESCE(SUM(cost_usd), 0) as total_cost,
                 COALESCE(AVG(duration_s), 0) as avg_duration_s
-            FROM console.maestra_runs
+            FROM console.mai_runs
             {where}
             """,
             *params,
@@ -732,13 +746,13 @@ async def get_all_config() -> dict[str, Any]:
 # --- Seed helpers ---
 
 
-async def _seed_maestra_runs() -> None:
-    """Seed representative maestra run data if table is empty."""
+async def _seed_mai_runs() -> None:
+    """Seed representative mai run data if table is empty."""
     if not _pool:
         return
 
     async with _pool.acquire() as conn:
-        count = await conn.fetchval("SELECT COUNT(*) FROM console.maestra_runs")
+        count = await conn.fetchval("SELECT COUNT(*) FROM console.mai_runs")
         if count > 0:
             return
 
@@ -763,7 +777,7 @@ async def _seed_maestra_runs() -> None:
             ts = now - timedelta(minutes=r["mins_ago"])
             await conn.execute(
                 """
-                INSERT INTO console.maestra_runs
+                INSERT INTO console.mai_runs
                     (engagement_id, step_name, run_tag, model_version,
                      constitution_version, duration_s, tokens_in, tokens_out,
                      cost_usd, status, error_detail, created_at)
@@ -830,7 +844,7 @@ async def _seed_narrative() -> None:
                 "id": "step-4",
                 "title": "COFA Unification",
                 "phase": "combine",
-                "description": "Maestra performs chart-of-accounts unification across entities.",
+                "description": "Mai performs chart-of-accounts unification across entities.",
                 "messages": [
                     {"text": "Beginning COFA mapping...", "delay_ms": 2000},
                     {"text": "6 conflicts identified. 3 resolved automatically.", "delay_ms": 3000},

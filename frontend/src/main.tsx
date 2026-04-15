@@ -6,13 +6,13 @@ import { EngagementProvider } from './context/EngagementContext'
 import { ModeProvider } from './context/ModeContext'
 import { EntityProvider } from './context/EntityContext'
 import { HealthProvider } from './context/HealthContext'
-import { MaestraPageContextProvider } from './context/MaestraPageContext'
+import { MaiPageContextProvider } from './context/MaiPageContext'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <MaestraPageContextProvider>
+      <MaiPageContextProvider>
         <EngagementProvider>
           <ModeProvider>
             <EntityProvider>
@@ -22,7 +22,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             </EntityProvider>
           </ModeProvider>
         </EngagementProvider>
-      </MaestraPageContextProvider>
+      </MaiPageContextProvider>
     </BrowserRouter>
   </React.StrictMode>,
 )

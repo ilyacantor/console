@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
-import MaestraFloat from './MaestraPanel'
+import MaiFloat from './MaiPanel'
 
 export default function Layout({ children }: { children: ReactNode }) {
   const [floatSideOpen, setFloatSideOpen] = useState(false)
@@ -26,7 +26,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         </main>
       </div>
 
-      <MaestraFloat
+      <MaiFloat
         currentPage={location.pathname}
         onSideOpen={setFloatSideOpen}
       />
