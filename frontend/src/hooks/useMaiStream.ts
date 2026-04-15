@@ -1,18 +1,18 @@
 /**
- * useMaestraStream — SSE streaming hook for Maestra chat.
+ * useMaiStream — SSE streaming hook for Mai chat.
  *
  * Manages: fetch lifecycle, SSE parsing, streaming state, abort control.
  * Does NOT manage: input text, message history, or global context.
  *
- * Console adaptation: routes through /api/proxy/platform/api/maestra/chat
+ * Console adaptation: routes through /api/proxy/platform/api/mai/chat
  */
 
 import { useState, useRef, useCallback } from 'react';
 
-export interface UseMaestraStreamOptions {
+export interface UseMaiStreamOptions {
   /** Called before fetch — caller adds user message to their store */
   onUserMessage: (text: string) => void;
-  /** Called when streaming completes — caller commits maestra response */
+  /** Called when streaming completes — caller commits mai response */
   onComplete: (text: string) => void;
   /** Page context for floating chat (sent as page_context in POST body) */
   page_context?: string | null;
@@ -24,7 +24,7 @@ export interface UseMaestraStreamOptions {
   engagement_id?: string | null;
 }
 
-export interface UseMaestraStreamResult {
+export interface UseMaiStreamResult {
   sendMessage: (text: string) => Promise<void>;
   isStreaming: boolean;
   streamBuffer: string;
@@ -33,7 +33,7 @@ export interface UseMaestraStreamResult {
   abort: () => void;
 }
 
-export function useMaestraStream(options: UseMaestraStreamOptions): UseMaestraStreamResult {
+export function useMaiStream(options: UseMaiStreamOptions): UseMaiStreamResult {
   const { onUserMessage, onComplete, page_context, session_id, contextBlock, engagement_id } = options;
 
   const [isStreaming, setIsStreaming] = useState(false);
@@ -74,7 +74,7 @@ export function useMaestraStream(options: UseMaestraStreamOptions): UseMaestraSt
           ? `${contextBlock}\n\n${trimmed}`
           : trimmed;
 
-        const response = await fetch('/api/proxy/platform/api/maestra/chat', {
+        const response = await fetch('/api/proxy/platform/api/mai/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -89,13 +89,13 @@ export function useMaestraStream(options: UseMaestraStreamOptions): UseMaestraSt
         if (!response.ok) {
           const detail = await response.text().catch(() => response.statusText);
           throw new Error(
-            `Maestra chat failed — POST /api/proxy/platform/api/maestra/chat returned ${response.status}: ${detail}`,
+            `Mai chat failed — POST /api/proxy/platform/api/mai/chat returned ${response.status}: ${detail}`,
           );
         }
 
         if (!response.body) {
           throw new Error(
-            'Maestra chat failed — response body is null (streaming not supported)',
+            'Mai chat failed — response body is null (streaming not supported)',
           );
         }
 
@@ -153,7 +153,7 @@ export function useMaestraStream(options: UseMaestraStreamOptions): UseMaestraSt
         const message =
           err instanceof Error
             ? err.message
-            : 'Maestra chat failed — unknown error';
+            : 'Mai chat failed — unknown error';
         setError(message);
         setIsStreaming(false);
         setIsThinking(false);
@@ -166,4 +166,4 @@ export function useMaestraStream(options: UseMaestraStreamOptions): UseMaestraSt
   return { sendMessage, isStreaming, streamBuffer, isThinking, error, abort };
 }
 
-export default useMaestraStream;
+export default useMaiStream;

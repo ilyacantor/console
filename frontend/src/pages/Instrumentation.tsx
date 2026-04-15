@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchInstrumentationRuns, fetchInstrumentationSummary, type MaestraRun, type InstrumentationSummary } from '../api/client'
+import { fetchInstrumentationRuns, fetchInstrumentationSummary, type MaiRun, type InstrumentationSummary } from '../api/client'
 import { useEngagement } from '../context/EngagementContext'
 
 function SummaryCard({ label, value }: { label: string; value: string }) {
@@ -25,7 +25,7 @@ type SortKey = 'step_name' | 'duration_s' | 'tokens' | 'cost_usd' | 'status'
 
 export default function Instrumentation() {
   const { activeEngagement } = useEngagement()
-  const [runs, setRuns] = useState<MaestraRun[]>([])
+  const [runs, setRuns] = useState<MaiRun[]>([])
   const [summary, setSummary] = useState<InstrumentationSummary | null>(null)
   const [filter, setFilter] = useState<string>('all')
   const [sortKey, setSortKey] = useState<SortKey>('step_name')
@@ -107,7 +107,7 @@ export default function Instrumentation() {
           </thead>
           <tbody>
             {sorted.map((r) => (
-              <tr key={r.maestra_run_id} style={{ borderBottom: '0.5px solid var(--border)' }}>
+              <tr key={r.mai_run_id} style={{ borderBottom: '0.5px solid var(--border)' }}>
                 <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>{r.step_name}</td>
                 <td style={{ padding: '6px 8px', fontFamily: 'monospace', color: 'var(--text-muted)', fontSize: '11px' }}>{r.run_tag}</td>
                 <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }}>{r.duration_s?.toFixed(1)}s</td>

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { fetchOperatorFeedPlans, type MaestraPlan, type MaestraPlansResponse } from '../api/client'
+import { fetchOperatorFeedPlans, type MaiPlan, type MaiPlansResponse } from '../api/client'
 import { useEngagement } from '../context/EngagementContext'
 
 const REFRESH_INTERVAL_MS = 30_000
@@ -88,7 +88,7 @@ function timeAgo(iso: string): string {
   return `${days}d ago`
 }
 
-function PlanCard({ plan }: { plan: MaestraPlan }) {
+function PlanCard({ plan }: { plan: MaiPlan }) {
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -187,7 +187,7 @@ function PlanCard({ plan }: { plan: MaestraPlan }) {
 
 export default function OperatorFeed() {
   const { activeEngagement } = useEngagement()
-  const [plans, setPlans] = useState<MaestraPlan[]>([])
+  const [plans, setPlans] = useState<MaiPlan[]>([])
   const [total, setTotal] = useState(0)
   const [tierFilter, setTierFilter] = useState<TierFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -211,7 +211,7 @@ export default function OperatorFeed() {
     if (statusFilter !== 'all') params.status = statusFilter
 
     try {
-      const resp: MaestraPlansResponse = await fetchOperatorFeedPlans(params)
+      const resp: MaiPlansResponse = await fetchOperatorFeedPlans(params)
       let filtered = resp.plans
       if (tierFilter !== 'all') {
         filtered = filtered.filter((p) => p.plan_type === tierFilter)

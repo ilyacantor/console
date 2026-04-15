@@ -1,5 +1,5 @@
 /**
- * MaestraFloat — Floating Maestra access pill, chat panel, and side panel.
+ * MaiFloat — Floating Mai access pill, chat panel, and side panel.
  *
  * Three modes:
  *   dormant — small pill in bottom-right corner
@@ -25,32 +25,32 @@ import {
   Check,
 } from 'lucide-react';
 import Markdown from 'react-markdown';
-import { useMaestraStream } from '../hooks/useMaestraStream';
+import { useMaiStream } from '../hooks/useMaiStream';
 import { usePolledData } from '../hooks/usePolledData';
-import { usePageContext, type PageContext } from '../context/MaestraPageContext';
+import { usePageContext, type PageContext } from '../context/MaiPageContext';
 import { useEngagement } from '../context/EngagementContext';
 import { capitalize } from '../utils/format';
-import MAESTRA_PRESETS from './maestra/presets';
+import MAI_PRESETS from './mai/presets';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface MaestraFloatProps {
+interface MaiFloatProps {
   currentPage: string;
   onSideOpen: (open: boolean) => void;
 }
 
 interface FloatMessage {
   id: string;
-  role: 'user' | 'maestra' | 'system';
+  role: 'user' | 'mai' | 'system';
   content: string;
   timestamp: number;
 }
 
 type FloatMode = 'dormant' | 'chat' | 'side';
 
-interface MaestraStatusResponse {
+interface MaiStatusResponse {
   engagement_id?: string | null;
   status?: string | null;
   entity?: string | null;
@@ -66,7 +66,7 @@ function formatMessagesAsMarkdown(messages: FloatMessage[]): string {
     month: 'long',
     day: 'numeric',
   });
-  const lines: string[] = [`# Maestra Chat — ${dateStr}`, ''];
+  const lines: string[] = [`# Mai Chat — ${dateStr}`, ''];
   for (const msg of messages) {
     const time = new Date(msg.timestamp).toLocaleTimeString([], {
       hour: '2-digit',
@@ -75,7 +75,7 @@ function formatMessagesAsMarkdown(messages: FloatMessage[]): string {
     if (msg.role === 'system') {
       lines.push('---', `*${msg.content}*`, '');
     } else {
-      const speaker = msg.role === 'user' ? 'You' : 'Maestra';
+      const speaker = msg.role === 'user' ? 'You' : 'Mai';
       lines.push(`**${speaker}** (${time})`, '', msg.content, '');
     }
   }
@@ -106,7 +106,7 @@ function buildContextBlock(ctx: PageContext): string {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatProps) {
+export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
   const [mode, setMode] = useState<FloatMode>('dormant');
   const [messages, setMessages] = useState<FloatMessage[]>([]);
   const [sessionId, setSessionId] = useState(
@@ -136,7 +136,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
   // -------------------------------------------------------------------
   // Streaming
   // -------------------------------------------------------------------
-  const { sendMessage, isStreaming, streamBuffer, isThinking, error } = useMaestraStream({
+  const { sendMessage, isStreaming, streamBuffer, isThinking, error } = useMaiStream({
     onUserMessage: (text) => {
       setMessages((prev) => [
         ...prev,
@@ -153,7 +153,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
         ...prev,
         {
           id: crypto.randomUUID(),
-          role: 'maestra',
+          role: 'mai',
           content: text,
           timestamp: Date.now(),
         },
@@ -168,9 +168,9 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
   // -------------------------------------------------------------------
   // Polling — only when panel is open
   // -------------------------------------------------------------------
-  const { data: _maestraStatus } = usePolledData<MaestraStatusResponse>(
+  const { data: _maiStatus } = usePolledData<MaiStatusResponse>(
     async () => {
-      const res = await fetch('/api/proxy/platform/api/maestra/status');
+      const res = await fetch('/api/proxy/platform/api/mai/status');
       if (!res.ok) throw new Error(`Status fetch failed: ${res.status}`);
       return res.json();
     },
@@ -297,7 +297,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `maestra-chat-${dateTag}.md`;
+    a.download = `mai-chat-${dateTag}.md`;
     a.click();
     URL.revokeObjectURL(url);
     setMenuOpen(false);
@@ -325,7 +325,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
   // Presets for current page
   // -------------------------------------------------------------------
   const pageKey = currentPage.replace(/^\//, '').split('/')[0] || 'pipeline';
-  const presets = MAESTRA_PRESETS[pageKey] || [];
+  const presets = MAI_PRESETS[pageKey] || [];
   const showPresets = messages.length === 0 && !isStreaming;
 
   // -------------------------------------------------------------------
@@ -352,7 +352,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
             className="text-sm font-semibold"
             style={{ color: 'var(--text-primary)' }}
           >
-            Maestra
+            Mai
           </span>
           {engagementLabel && (
             <span
@@ -468,7 +468,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
         {showPresets && (
           <div className="flex flex-col items-center justify-center h-full">
             <p className="text-sm mb-2" style={{ color: 'var(--text-muted)' }}>
-              Ask Maestra anything
+              Ask Mai anything
             </p>
             <p className="text-xs mb-4" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
               Context: {pageKey.replace(/-/g, ' ')}
@@ -522,8 +522,8 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
                   color: msg.role === 'user' ? '#fff' : 'var(--text-primary)',
                 }}
               >
-                {msg.role === 'maestra' ? (
-                  <div className="maestra-markdown prose prose-invert prose-sm max-w-none">
+                {msg.role === 'mai' ? (
+                  <div className="mai-markdown prose prose-invert prose-sm max-w-none">
                     <Markdown>{msg.content}</Markdown>
                   </div>
                 ) : (
@@ -552,7 +552,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
             >
               <span className="inline-flex items-center gap-1.5">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Maestra is thinking...
+                Mai is thinking...
               </span>
             </div>
           </div>
@@ -569,7 +569,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
                 color: 'var(--text-primary)',
               }}
             >
-              <div className="maestra-markdown prose prose-invert prose-sm max-w-none">
+              <div className="mai-markdown prose prose-invert prose-sm max-w-none">
                 <Markdown>{streamBuffer}</Markdown>
               </div>
             </div>
@@ -608,7 +608,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask Maestra..."
+            placeholder="Ask Mai..."
             rows={1}
             className="flex-1 px-3 py-2 rounded-lg text-sm resize-none"
             style={{
@@ -656,7 +656,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
           background: 'var(--bg-surface)',
           border: '0.5px solid var(--border)',
         }}
-        title="Ask Maestra"
+        title="Ask Mai"
       >
         <span
           className="text-base font-bold leading-none"
@@ -679,7 +679,7 @@ export default function MaestraFloat({ currentPage, onSideOpen }: MaestraFloatPr
           className="max-w-0 overflow-hidden group-hover:max-w-[120px] transition-all duration-200 whitespace-nowrap text-sm ml-0 group-hover:ml-2"
           style={{ color: 'var(--text-secondary)' }}
         >
-          Ask Maestra
+          Ask Mai
         </span>
       </button>
     );

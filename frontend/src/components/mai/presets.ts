@@ -1,10 +1,10 @@
 /**
- * Maestra preset suggestions — config-driven, per page context.
+ * Mai preset suggestions — config-driven, per page context.
  *
  * To add or change presets, edit this file. No component code changes needed.
  */
 
-const MAESTRA_PRESETS: Record<string, string[]> = {
+const MAI_PRESETS: Record<string, string[]> = {
   pipeline: [
     "What's the pipeline status?",
     'When was the last run?',
@@ -51,4 +51,4 @@ const MAESTRA_PRESETS: Record<string, string[]> = {
   ],
 };
 
-export default MAESTRA_PRESETS;
+export default MAI_PRESETS;

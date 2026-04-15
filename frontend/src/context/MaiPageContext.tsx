@@ -1,9 +1,9 @@
 /**
- * MaestraPageContext — Captures visible page state for Maestra context injection.
+ * MaiPageContext — Captures visible page state for Mai context injection.
  *
  * Each page registers its current visible state (errors, data counts,
- * selections) via setPageContext(). MaestraFloat reads this context and
- * injects it into chat requests so Maestra knows what the user is seeing.
+ * selections) via setPageContext(). MaiFloat reads this context and
+ * injects it into chat requests so Mai knows what the user is seeing.
  *
  * The context block is invisible to the user — it only appears in the API
  * request message, not in the chat UI.
@@ -28,7 +28,7 @@ export interface PageContext {
   summary?: string;
 }
 
-interface MaestraPageContextType {
+interface MaiPageContextType {
   pageContext: PageContext;
   setPageContext: (ctx: Partial<PageContext>) => void;
   clearPageContext: () => void;
@@ -42,9 +42,9 @@ function defaultPageContext(): PageContext {
   };
 }
 
-const MaestraPageCtx = createContext<MaestraPageContextType | undefined>(undefined);
+const MaiPageCtx = createContext<MaiPageContextType | undefined>(undefined);
 
-export function MaestraPageContextProvider({ children }: { children: ReactNode }) {
+export function MaiPageContextProvider({ children }: { children: ReactNode }) {
   const [pageContext, setPageContextState] = useState<PageContext>(defaultPageContext);
 
   const setPageContext = useCallback((ctx: Partial<PageContext>) => {
@@ -61,16 +61,16 @@ export function MaestraPageContextProvider({ children }: { children: ReactNode }
   }, []);
 
   return (
-    <MaestraPageCtx.Provider value={{ pageContext, setPageContext, clearPageContext }}>
+    <MaiPageCtx.Provider value={{ pageContext, setPageContext, clearPageContext }}>
       {children}
-    </MaestraPageCtx.Provider>
+    </MaiPageCtx.Provider>
   );
 }
 
 export function usePageContext() {
-  const ctx = useContext(MaestraPageCtx);
+  const ctx = useContext(MaiPageCtx);
   if (ctx === undefined) {
-    throw new Error('usePageContext must be used within a MaestraPageContextProvider');
+    throw new Error('usePageContext must be used within a MaiPageContextProvider');
   }
   return ctx;
 }

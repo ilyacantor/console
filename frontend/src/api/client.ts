@@ -341,8 +341,8 @@ export function updateConfig(data: Record<string, unknown>): Promise<{ status: s
 }
 
 // Instrumentation
-export interface MaestraRun {
-  maestra_run_id: string
+export interface MaiRun {
+  mai_run_id: string
   engagement_id: string | null
   step_name: string
   run_tag: string | null
@@ -368,7 +368,7 @@ export function fetchInstrumentationRuns(params?: {
   engagement_id?: string
   step_name?: string
   limit?: number
-}): Promise<{ runs: MaestraRun[]; count: number }> {
+}): Promise<{ runs: MaiRun[]; count: number }> {
   const qs = new URLSearchParams()
   if (params?.engagement_id) qs.set('engagement_id', params.engagement_id)
   if (params?.step_name) qs.set('step_name', params.step_name)
@@ -422,10 +422,10 @@ export function updateNarrative(narrative: Narrative): Promise<{ status: string;
   })
 }
 
-// Maestra chat is handled by useMaestraStream hook — no client.ts function needed
+// Mai chat is handled by useMaiStream hook — no client.ts function needed
 
-// Operator Feed — Maestra plans (proxied from Platform)
-export interface MaestraPlan {
+// Operator Feed — Mai plans (proxied from Platform)
+export interface MaiPlan {
   id: string
   tenant_id: string
   plan_type: 'tier_1_auto' | 'tier_2_validate' | 'tier_3_plan' | 'tier_4_escalate'
@@ -447,8 +447,8 @@ export interface MaestraPlan {
   updated_at: string
 }
 
-export interface MaestraPlansResponse {
-  plans: MaestraPlan[]
+export interface MaiPlansResponse {
+  plans: MaiPlan[]
   total: number
   limit: number
   offset: number
@@ -459,7 +459,7 @@ export function fetchOperatorFeedPlans(params: {
   status?: string
   limit?: number
   offset?: number
-}): Promise<MaestraPlansResponse> {
+}): Promise<MaiPlansResponse> {
   const qs = new URLSearchParams()
   qs.set('tenant_id', params.tenant_id)
   if (params.status) qs.set('status', params.status)
