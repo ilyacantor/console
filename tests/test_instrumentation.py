@@ -1,4 +1,4 @@
-"""Tests for instrumentation routes — Maestra run ledger and summary."""
+"""Tests for instrumentation routes — Mai run ledger and summary."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -11,7 +11,7 @@ client = TestClient(app)
 
 SAMPLE_RUNS = [
     {
-        "maestra_run_id": "run-001",
+        "mai_run_id": "run-001",
         "engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         "step_name": "cofa-map",
         "run_tag": "cofa-run-001",
@@ -26,7 +26,7 @@ SAMPLE_RUNS = [
         "created_at": "2026-03-25T07:00:00+00:00",
     },
     {
-        "maestra_run_id": "run-002",
+        "mai_run_id": "run-002",
         "engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         "step_name": "chat",
         "run_tag": "chat-001",
@@ -41,7 +41,7 @@ SAMPLE_RUNS = [
         "created_at": "2026-03-25T08:00:00+00:00",
     },
     {
-        "maestra_run_id": "run-003",
+        "mai_run_id": "run-003",
         "engagement_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         "step_name": "cofa-map",
         "run_tag": "cofa-run-002",
@@ -65,7 +65,7 @@ SAMPLE_SUMMARY = {
 }
 
 
-@patch("backend.app.routes.instrumentation.db.get_maestra_runs")
+@patch("backend.app.routes.instrumentation.db.get_mai_runs")
 def test_get_runs(mock_get_runs):
     """GET /api/instrumentation/runs returns seeded data."""
     mock_get_runs.return_value = SAMPLE_RUNS
@@ -79,7 +79,7 @@ def test_get_runs(mock_get_runs):
     assert data["runs"][1]["step_name"] == "chat"
 
 
-@patch("backend.app.routes.instrumentation.db.get_maestra_summary")
+@patch("backend.app.routes.instrumentation.db.get_mai_summary")
 def test_get_summary(mock_summary):
     """GET /api/instrumentation/summary returns correct aggregates."""
     mock_summary.return_value = SAMPLE_SUMMARY
@@ -93,7 +93,7 @@ def test_get_summary(mock_summary):
     assert data["avg_duration_s"] == 5.2
 
 
-@patch("backend.app.routes.instrumentation.db.get_maestra_runs")
+@patch("backend.app.routes.instrumentation.db.get_mai_runs")
 def test_filter_by_step_name(mock_get_runs):
     """Filter by step_name returns only matching runs."""
     cofa_runs = [r for r in SAMPLE_RUNS if r["step_name"] == "cofa-map"]
@@ -107,7 +107,7 @@ def test_filter_by_step_name(mock_get_runs):
         assert run["step_name"] == "cofa-map"
 
 
-@patch("backend.app.routes.instrumentation.db.get_maestra_runs")
+@patch("backend.app.routes.instrumentation.db.get_mai_runs")
 def test_filter_by_engagement(mock_get_runs):
     """Filter by engagement_id passes through to DB layer."""
     mock_get_runs.return_value = SAMPLE_RUNS
@@ -121,7 +121,7 @@ def test_filter_by_engagement(mock_get_runs):
     )
 
 
-@patch("backend.app.routes.instrumentation.db.get_maestra_runs")
+@patch("backend.app.routes.instrumentation.db.get_mai_runs")
 def test_limit_parameter(mock_get_runs):
     """Limit parameter is passed to DB layer."""
     mock_get_runs.return_value = [SAMPLE_RUNS[0]]
