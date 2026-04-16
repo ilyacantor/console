@@ -27,10 +27,9 @@ import {
 import Markdown from 'react-markdown';
 import { useMaiStream } from '../hooks/useMaiStream';
 import { usePolledData } from '../hooks/usePolledData';
-import { usePageContext, type PageContext } from '../context/MaiPageContext';
 import { useEngagement } from '../context/EngagementContext';
 import { capitalize } from '../utils/format';
-import MAI_PRESETS from './mai/presets';
+import { buildPresets } from './mai/presets';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -83,35 +82,39 @@ function formatMessagesAsMarkdown(messages: FloatMessage[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Page context → text block for API injection
-// ---------------------------------------------------------------------------
-
-function buildContextBlock(ctx: PageContext): string {
-  const lines: string[] = [
-    '[Page Context — not shown to user]',
-    `Current tab: ${ctx.tabLabel || 'Unknown'} (${ctx.route})`,
-  ];
-  if (ctx.visibleErrors.length > 0) {
-    lines.push(`Visible errors on screen: ${ctx.visibleErrors.join('; ')}`);
-  }
-  if (ctx.connectionStatus) lines.push(`Connection status: ${ctx.connectionStatus}`);
-  if (ctx.dataState) lines.push(`Data state: ${ctx.dataState}`);
-  if (ctx.activeSweep) lines.push(`Active sweep: ${ctx.activeSweep}`);
-  if (ctx.activeEntity) lines.push(`Active entity: ${ctx.activeEntity}`);
-  if (ctx.summary) lines.push(`Page note: ${ctx.summary}`);
-  return lines.join('\n');
-}
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
+
+const SESSION_ID_STORAGE_KEY = 'mai.session_id';
+
+function loadOrCreateSessionId(): string {
+  try {
+    const existing = window.localStorage.getItem(SESSION_ID_STORAGE_KEY);
+    if (existing) return existing;
+  } catch {
+    // localStorage unavailable — fall through to new id
+  }
+  const fresh = `float-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  try {
+    window.localStorage.setItem(SESSION_ID_STORAGE_KEY, fresh);
+  } catch {
+    // ignore
+  }
+  return fresh;
+}
+
+interface HistoryTurn {
+  id: string;
+  turn_index: number;
+  role: string;
+  content: { text?: string; compressed?: boolean; summary?: string } | null;
+  created_at: string;
+}
 
 export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
   const [mode, setMode] = useState<FloatMode>('dormant');
   const [messages, setMessages] = useState<FloatMessage[]>([]);
-  const [sessionId, setSessionId] = useState(
-    () => `float-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-  );
+  const [sessionId, setSessionId] = useState(loadOrCreateSessionId);
   const [input, setInput] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -126,12 +129,6 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
   // Engagement context
   // -------------------------------------------------------------------
   const { activeEngagement } = useEngagement();
-
-  // -------------------------------------------------------------------
-  // Page context — injected into API messages, invisible to UI
-  // -------------------------------------------------------------------
-  const { pageContext } = usePageContext();
-  const contextBlock = buildContextBlock(pageContext);
 
   // -------------------------------------------------------------------
   // Streaming
@@ -159,9 +156,9 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
         },
       ]);
     },
-    page_context: currentPage,
     session_id: sessionId,
-    contextBlock,
+    surface_id: 'console',
+    page_context: { route: currentPage, current_page: currentPage },
     engagement_id: activeEngagement?.engagement_id,
   });
 
@@ -178,6 +175,52 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
     [],
     { enabled: mode !== 'dormant' },
   );
+
+  // Load prior turns from Platform on mount / session resume
+  useEffect(() => {
+    let cancelled = false;
+    async function loadHistory() {
+      try {
+        const res = await fetch(
+          `/api/proxy/platform/api/mai/chat/history?session_id=${encodeURIComponent(sessionId)}`,
+        );
+        if (!res.ok) return;
+        const body = (await res.json()) as { turns?: HistoryTurn[] };
+        if (cancelled || !body.turns || body.turns.length === 0) return;
+        const rebuilt: FloatMessage[] = [];
+        for (const t of body.turns) {
+          const content = t.content;
+          if (!content) continue;
+          let text = '';
+          if (content.compressed && content.summary) {
+            text = `[compressed summary] ${content.summary}`;
+          } else if (typeof content.text === 'string') {
+            text = content.text;
+          } else {
+            continue;
+          }
+          const role =
+            t.role === 'user' ? 'user' : t.role === 'assistant' ? 'mai' : 'system';
+          rebuilt.push({
+            id: t.id,
+            role: role as FloatMessage['role'],
+            content: text,
+            timestamp: Date.parse(t.created_at) || Date.now(),
+          });
+        }
+        if (!cancelled && rebuilt.length > 0) {
+          setMessages(rebuilt);
+        }
+      } catch {
+        // History fetch is best-effort — a fresh session also returns 200
+        // with empty turns[], so failures here are silent by design.
+      }
+    }
+    void loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   // Detect engagement switch from context and inject system message
   useEffect(() => {
@@ -309,7 +352,13 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
       return;
     }
     setMessages([]);
-    setSessionId(`float-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+    const fresh = `float-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setSessionId(fresh);
+    try {
+      window.localStorage.setItem(SESSION_ID_STORAGE_KEY, fresh);
+    } catch {
+      // ignore
+    }
     setMenuOpen(false);
     setConfirmClear(false);
   };
@@ -322,10 +371,16 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
     : null;
 
   // -------------------------------------------------------------------
-  // Presets for current page
+  // Presets for current page — §9 generalization: M&A presets only on
+  // Convergence routes with an active engagement.
   // -------------------------------------------------------------------
   const pageKey = currentPage.replace(/^\//, '').split('/')[0] || 'pipeline';
-  const presets = MAI_PRESETS[pageKey] || [];
+  const presets = buildPresets({
+    pageKey,
+    route: currentPage,
+    hasActiveEngagement: !!activeEngagement,
+    isConvergenceRoute: currentPage.startsWith('/convergence'),
+  });
   const showPresets = messages.length === 0 && !isStreaming;
 
   // -------------------------------------------------------------------
@@ -512,6 +567,7 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
           return (
             <div
               key={msg.id}
+              data-mai-role={msg.role}
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
@@ -560,7 +616,7 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
 
         {/* Streaming buffer */}
         {streamBuffer && !isThinking && (
-          <div className="flex justify-start">
+          <div className="flex justify-start" data-testid="mai-stream-buffer">
             <div
               className="rounded-lg px-3 py-2 text-sm"
               style={{
@@ -605,6 +661,7 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
         <div className="flex gap-2">
           <textarea
             ref={inputRef}
+            data-testid="mai-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -621,6 +678,7 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
           />
           <button
             type="submit"
+            data-testid="mai-send"
             disabled={isStreaming || !input.trim()}
             className="px-3 py-2 rounded-lg transition-colors"
             style={{
@@ -649,6 +707,7 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
     return (
       <button
         onClick={openChat}
+        data-testid="mai-float-button"
         className="fixed z-50 group flex items-center gap-0 rounded-full px-3 py-2.5 shadow-lg cursor-pointer"
         style={{
           bottom: '24px',

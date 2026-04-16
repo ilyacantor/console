@@ -1,27 +1,42 @@
 /**
- * useMaiStream — SSE streaming hook for Mai chat.
+ * useMaiStream — canonical Mai v8 SSE streaming hook.
  *
- * Manages: fetch lifecycle, SSE parsing, streaming state, abort control.
- * Does NOT manage: input text, message history, or global context.
+ * Sends the canonical envelope (message, session_id, surface_id, tenant_id,
+ * operator_id, engagement_id?, page_context?) to Platform via the Console
+ * SSE proxy and handles all five event types:
+ *   content      — assistant text delta
+ *   tool_use     — Mai invoked a tool (routed to onToolUse)
+ *   tool_result  — tool dispatcher result (routed to onToolResult)
+ *   done         — turn complete
+ *   error        — hard failure (either surfaced as setError)
  *
- * Console adaptation: routes through /api/proxy/platform/api/mai/chat
+ * Tenant + operator are loaded once from /api/auth/identity and cached.
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+export interface MaiToolUseEvent {
+  tool_use_id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface MaiToolResultEvent {
+  tool_use_id: string;
+  name: string;
+  result?: unknown;
+  error?: string;
+}
 
 export interface UseMaiStreamOptions {
-  /** Called before fetch — caller adds user message to their store */
   onUserMessage: (text: string) => void;
-  /** Called when streaming completes — caller commits mai response */
   onComplete: (text: string) => void;
-  /** Page context for floating chat (sent as page_context in POST body) */
-  page_context?: string | null;
-  /** Session ID for the conversation */
   session_id: string;
-  /** Context block prepended to API message (invisible to chat UI) */
-  contextBlock?: string;
-  /** Engagement ID for engagement-scoped chat */
+  surface_id?: string;
   engagement_id?: string | null;
+  page_context?: Record<string, unknown> | null;
+  onToolUse?: (evt: MaiToolUseEvent) => void;
+  onToolResult?: (evt: MaiToolResultEvent) => void;
 }
 
 export interface UseMaiStreamResult {
@@ -33,20 +48,59 @@ export interface UseMaiStreamResult {
   abort: () => void;
 }
 
+interface Identity {
+  tenant_id: string;
+  operator_id: string;
+}
+
+let _identityPromise: Promise<Identity> | null = null;
+
+async function loadIdentity(): Promise<Identity> {
+  if (_identityPromise) return _identityPromise;
+  _identityPromise = fetch('/api/auth/identity')
+    .then(async (r) => {
+      if (!r.ok) {
+        const text = await r.text().catch(() => r.statusText);
+        throw new Error(
+          `Mai identity load failed — /api/auth/identity returned ${r.status}: ${text}`,
+        );
+      }
+      return r.json() as Promise<Identity>;
+    })
+    .catch((err) => {
+      _identityPromise = null;
+      throw err;
+    });
+  return _identityPromise;
+}
+
 export function useMaiStream(options: UseMaiStreamOptions): UseMaiStreamResult {
-  const { onUserMessage, onComplete, page_context, session_id, contextBlock, engagement_id } = options;
+  const {
+    onUserMessage, onComplete, session_id, surface_id = 'console',
+    engagement_id, page_context, onToolUse, onToolResult,
+  } = options;
 
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [identity, setIdentity] = useState<Identity | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
-
   const onUserMessageRef = useRef(onUserMessage);
   onUserMessageRef.current = onUserMessage;
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+  const onToolUseRef = useRef(onToolUse);
+  onToolUseRef.current = onToolUse;
+  const onToolResultRef = useRef(onToolResult);
+  onToolResultRef.current = onToolResult;
+
+  useEffect(() => {
+    loadIdentity()
+      .then(setIdentity)
+      .catch((err: Error) => setError(err.message));
+  }, []);
 
   const abort = useCallback(() => {
     abortRef.current?.abort();
@@ -55,6 +109,10 @@ export function useMaiStream(options: UseMaiStreamOptions): UseMaiStreamResult {
   const sendMessage = useCallback(
     async (text: string) => {
       if (!text.trim() || isStreaming) return;
+      if (!identity) {
+        setError('Mai identity not yet loaded — try again in a moment.');
+        return;
+      }
 
       setError(null);
       const trimmed = text.trim();
@@ -70,19 +128,23 @@ export function useMaiStream(options: UseMaiStreamOptions): UseMaiStreamResult {
       abortRef.current = controller;
 
       try {
-        const apiMessage = contextBlock
-          ? `${contextBlock}\n\n${trimmed}`
-          : trimmed;
+        const envelope = {
+          message: trimmed,
+          session_id,
+          surface_id,
+          tenant_id: identity.tenant_id,
+          operator_id: identity.operator_id,
+          engagement_id: engagement_id ?? null,
+          page_context: page_context ?? null,
+        };
 
         const response = await fetch('/api/proxy/platform/api/mai/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: apiMessage,
-            page_context: page_context ?? null,
-            session_id,
-            engagement_id: engagement_id ?? null,
-          }),
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+          },
+          body: JSON.stringify(envelope),
           signal: controller.signal,
         });
 
@@ -111,32 +173,65 @@ export function useMaiStream(options: UseMaiStreamOptions): UseMaiStreamResult {
 
           sseBuffer += decoder.decode(value, { stream: true });
 
-          const lines = sseBuffer.split('\n');
-          sseBuffer = lines.pop() || '';
+          const frames = sseBuffer.split('\n\n');
+          sseBuffer = frames.pop() || '';
 
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const jsonStr = line.slice(6);
+          for (const frame of frames) {
+            if (!frame.startsWith('data:')) continue;
+            const jsonStr = frame.replace(/^data:\s*/, '');
             if (!jsonStr) continue;
 
+            let event: {
+              type?: string;
+              text?: string;
+              tool_use_id?: string;
+              name?: string;
+              input?: Record<string, unknown>;
+              result?: unknown;
+              error?: string;
+            };
             try {
-              const event = JSON.parse(jsonStr);
-
-              if (event.type === 'content') {
-                accumulated += event.text;
-                setStreamBuffer(accumulated);
-                setIsThinking(false);
-              } else if (event.type === 'done') {
-                if (accumulated) {
-                  onCompleteRef.current(accumulated);
-                }
-                setStreamBuffer('');
-                setIsStreaming(false);
-                setIsThinking(false);
-                streamingDone = true;
-              }
+              event = JSON.parse(jsonStr);
             } catch {
-              // Partial JSON line — completed on next chunk
+              continue;
+            }
+
+            if (event.type === 'content' && typeof event.text === 'string') {
+              accumulated += event.text;
+              setStreamBuffer(accumulated);
+              setIsThinking(false);
+            } else if (
+              event.type === 'tool_use' &&
+              event.tool_use_id &&
+              event.name
+            ) {
+              onToolUseRef.current?.({
+                tool_use_id: event.tool_use_id,
+                name: event.name,
+                input: event.input ?? {},
+              });
+              setIsThinking(true);
+            } else if (
+              event.type === 'tool_result' &&
+              event.tool_use_id &&
+              event.name
+            ) {
+              onToolResultRef.current?.({
+                tool_use_id: event.tool_use_id,
+                name: event.name,
+                result: event.result,
+                error: event.error,
+              });
+            } else if (event.type === 'error' && event.error) {
+              throw new Error(event.error);
+            } else if (event.type === 'done') {
+              if (accumulated) {
+                onCompleteRef.current(accumulated);
+              }
+              setStreamBuffer('');
+              setIsStreaming(false);
+              setIsThinking(false);
+              streamingDone = true;
             }
           }
         }
@@ -151,16 +246,14 @@ export function useMaiStream(options: UseMaiStreamOptions): UseMaiStreamResult {
         if (err instanceof DOMException && err.name === 'AbortError') return;
 
         const message =
-          err instanceof Error
-            ? err.message
-            : 'Mai chat failed — unknown error';
+          err instanceof Error ? err.message : 'Mai chat failed — unknown error';
         setError(message);
         setIsStreaming(false);
         setIsThinking(false);
         setStreamBuffer('');
       }
     },
-    [isStreaming, page_context, session_id, contextBlock, engagement_id],
+    [isStreaming, identity, session_id, surface_id, engagement_id, page_context],
   );
 
   return { sendMessage, isStreaming, streamBuffer, isThinking, error, abort };

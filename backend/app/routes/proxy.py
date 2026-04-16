@@ -1,16 +1,23 @@
 """Proxy routes — forward requests to AOS modules to avoid CORS issues."""
 
 import logging
+from typing import AsyncGenerator
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from backend.app import config
 
 logger = logging.getLogger("console.proxy")
 
 router = APIRouter()
+
+# Paths that must be proxied as SSE streams. Regular _proxy reads the full
+# body before returning — for chat we need to forward chunks as they arrive.
+_SSE_STREAM_PATHS: set[tuple[str, str]] = {
+    ("platform", "api/mai/chat"),
+}
 
 MODULE_URLS = {
     "aod": config.AOD_BASE_URL,
@@ -34,7 +41,62 @@ async def proxy_get(module: str, path: str, request: Request) -> Response:
 @router.post("/{module}/{path:path}")
 async def proxy_post(module: str, path: str, request: Request) -> Response:
     """Forward a POST request to the specified AOS module."""
+    if (module, path) in _SSE_STREAM_PATHS:
+        return await _proxy_sse(module, path, request)
     return await _proxy(module, path, "POST", request)
+
+
+async def _proxy_sse(module: str, path: str, request: Request) -> Response:
+    """Forward a POST as an SSE stream — used for Mai canonical /chat.
+
+    httpx.stream() yields chunks as they arrive from Platform; we reemit
+    them to the browser via StreamingResponse so the tool-use loop can
+    deliver content/tool_use/tool_result/done events incrementally.
+    """
+    base_url = MODULE_URLS.get(module)
+    if not base_url:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unknown module '{module}'"},
+        )
+
+    target_url = f"{base_url}/{path}"
+    body = await request.body()
+
+    async def forward() -> AsyncGenerator[bytes, None]:
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "POST",
+                    target_url,
+                    content=body,
+                    headers={
+                        "Content-Type": request.headers.get(
+                            "content-type", "application/json"
+                        ),
+                        "Accept": "text/event-stream",
+                    },
+                ) as resp:
+                    if resp.status_code >= 400:
+                        detail = (await resp.aread()).decode(errors="replace")
+                        yield (
+                            f'data: {{"type":"error","error":"Platform {target_url} '
+                            f'returned {resp.status_code}: {detail}"}}\n\n'
+                        ).encode()
+                        return
+                    async for chunk in resp.aiter_raw():
+                        yield chunk
+        except httpx.HTTPError as exc:
+            logger.error("SSE proxy failed: %s %s — %s", "POST", target_url, exc)
+            yield (
+                f'data: {{"type":"error","error":"Cannot reach {target_url} — {exc}"}}\n\n'
+            ).encode()
+
+    return StreamingResponse(
+        forward(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 async def _proxy(module: str, path: str, method: str, request: Request) -> Response:

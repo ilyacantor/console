@@ -21,8 +21,7 @@ function pickDefault(list: Engagement[]): Engagement | null {
     const match = list.find((e) => e.engagement_id === stored)
     if (match) return match
   }
-  const ma = list.find((e) => e.engagement_type === 'MA')
-  return ma ?? list[0]!
+  return list[0]!
 }
 
 export function EngagementProvider({ children }: { children: ReactNode }) {

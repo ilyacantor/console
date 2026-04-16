@@ -1,10 +1,18 @@
 """Console configuration — reads environment variables at module level."""
 
-import os
+from __future__ import annotations
 
+import logging
+import os
+from pathlib import Path
+from typing import Any
+
+import yaml
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger("console.config")
 
 # Database
 SUPABASE_DB_URL: str = os.environ.get("SUPABASE_DB_URL", "")
@@ -20,6 +28,9 @@ CONVERGENCE_BASE_URL: str = os.environ.get("CONVERGENCE_BASE_URL", "http://local
 
 # Tenant
 AOS_TENANT_ID: str = os.environ.get("AOS_TENANT_ID") or os.environ.get("AOS_DEV_TENANT_ID", "")
+
+# Operator — single-operator dev mode until real SSO wires the identity surface.
+AOS_OPERATOR_ID: str = os.environ.get("AOS_OPERATOR_ID", "dev-operator")
 
 # Seed entities — from .env, not hardcoded in application code (F1 guard)
 SEED_ACQUIRER_ENTITY: str = os.environ.get("SEED_ACQUIRER_ENTITY", "")
@@ -50,3 +61,47 @@ DEFAULT_MODULE_URLS = {
     "nlq": "https://aos-nlq.onrender.com",
     "farm": "https://farmv2.onrender.com",
 }
+
+
+# ---------------------------------------------------------------------------
+# Mai v8 Observability as Code (§8.0)
+#
+# Configuration lives in `console/config/mai_observability.yaml`. Loaded at
+# import time so callers can read `MAI_OBSERVABILITY` / `MAI_OBSERVABILITY_SLOS`
+# / `MAI_OBSERVABILITY_SURFACES` without an async hop. Missing or malformed
+# file raises loudly — per §A1 no silent fallback.
+# ---------------------------------------------------------------------------
+
+MAI_OBSERVABILITY_PATH: Path = Path(__file__).resolve().parents[2] / "config" / "mai_observability.yaml"
+
+
+def load_mai_observability(path: Path = MAI_OBSERVABILITY_PATH) -> dict[str, Any]:
+    """Load and validate the Mai observability YAML. Raises on missing file,
+    parse error, or missing required sections."""
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Mai observability config not found at {path}. "
+            f"Create it per §8.0 before starting Console."
+        )
+    try:
+        raw = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise RuntimeError(f"Failed to parse {path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"{path} must contain a mapping at the top level.")
+    for required in ("version", "slos", "surfaces"):
+        if required not in raw:
+            raise RuntimeError(
+                f"{path} missing required key '{required}'. "
+                f"Per §8.0 this config is non-optional."
+            )
+    logger.info(
+        "Mai observability loaded — version=%s surfaces=%s",
+        raw.get("version"), sorted(raw.get("surfaces", {}).keys()),
+    )
+    return raw
+
+
+MAI_OBSERVABILITY: dict[str, Any] = load_mai_observability()
+MAI_OBSERVABILITY_SLOS: dict[str, Any] = MAI_OBSERVABILITY.get("slos", {})
+MAI_OBSERVABILITY_SURFACES: dict[str, Any] = MAI_OBSERVABILITY.get("surfaces", {})

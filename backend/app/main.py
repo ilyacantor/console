@@ -15,7 +15,9 @@ from backend.app.routes.changes import router as changes_router
 from backend.app.routes.config import router as config_router
 from backend.app.routes.engagements import router as engagements_router
 from backend.app.routes.health import router as health_router
+from backend.app.routes.identity import router as identity_router
 from backend.app.routes.instrumentation import router as instrumentation_router
+from backend.app.routes.mcp import router as mcp_router
 from backend.app.routes.narrative import router as narrative_router
 from backend.app.routes.operator_feed import router as operator_feed_router
 from backend.app.routes.pipeline import router as pipeline_router
@@ -73,6 +75,8 @@ app.include_router(config_router, prefix="/api/config", tags=["Config"])
 app.include_router(instrumentation_router, prefix="/api/instrumentation", tags=["Instrumentation"])
 app.include_router(narrative_router, prefix="/api/narrative", tags=["Narrative"])
 app.include_router(operator_feed_router, prefix="/api/operator-feed", tags=["Operator Feed"])
+app.include_router(identity_router, prefix="/api/auth", tags=["Identity"])
+app.include_router(mcp_router, prefix="/api/mcp", tags=["MCP"])
 
 
 @app.get("/health")
