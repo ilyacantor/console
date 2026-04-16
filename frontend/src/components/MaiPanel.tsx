@@ -28,6 +28,7 @@ import Markdown from 'react-markdown';
 import { useMaiStream } from '../hooks/useMaiStream';
 import { usePolledData } from '../hooks/usePolledData';
 import { useEngagement } from '../context/EngagementContext';
+import { useChatScopeReader } from '../context/ChatScopeContext';
 import { capitalize } from '../utils/format';
 import { getOrCreateSessionId, resetSessionId } from '../utils/chatSession';
 import { buildPresets } from './mai/presets';
@@ -109,9 +110,19 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
   const prevEngIdRef = useRef<string | null>(null);
 
   // -------------------------------------------------------------------
-  // Engagement context
+  // Engagement context (UI display: header label, change-of-engagement
+  // system messages, presets). Engagement scope for the chat envelope
+  // is read separately from ChatScopeContext below.
   // -------------------------------------------------------------------
   const { activeEngagement } = useEngagement();
+
+  // -------------------------------------------------------------------
+  // Chat scope (page opt-in for engagement memory loading)
+  // Pages publish via useChatScope; default is null. Engagement memory
+  // and Layer 3 policies only load when scope is published, preventing
+  // Meridian/Cascadia leakage on SE pages or unrelated routes.
+  // -------------------------------------------------------------------
+  const { engagementId: scopedEngagementId } = useChatScopeReader();
 
   // -------------------------------------------------------------------
   // Streaming
@@ -142,7 +153,7 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
     session_id: sessionId,
     surface_id: 'console',
     page_context: { route: currentPage, current_page: currentPage },
-    engagement_id: activeEngagement?.engagement_id,
+    engagement_id: scopedEngagementId ?? undefined,
   });
 
   // -------------------------------------------------------------------

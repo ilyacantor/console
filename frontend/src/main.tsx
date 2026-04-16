@@ -8,6 +8,7 @@ import { ModeProvider } from './context/ModeContext'
 import { EntityProvider } from './context/EntityContext'
 import { HealthProvider } from './context/HealthContext'
 import { SurfaceExtrasProvider } from './context/SurfaceExtrasContext'
+import { ChatScopeProvider } from './context/ChatScopeContext'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -18,8 +19,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <EntityProvider>
             <HealthProvider>
               <SurfaceExtrasProvider>
-                <SurfaceStateSync />
-                <App />
+                <ChatScopeProvider>
+                  <SurfaceStateSync />
+                  <App />
+                </ChatScopeProvider>
               </SurfaceExtrasProvider>
             </HealthProvider>
           </EntityProvider>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fetchEngagements, createEngagement, fetchRuns, fetchEngagementHistory, type Engagement, type EngagementHistoryEvent } from '../api/client'
 import { useEngagement } from '../context/EngagementContext'
 import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
+import { useChatScope } from '../context/ChatScopeContext'
 
 function TypePill({ type }: { type: string }) {
   const colors: Record<string, { bg: string; text: string }> = {
@@ -134,6 +135,10 @@ export default function Engagements() {
   }, [selected?.engagement_id])
 
   const state = selected?.state_json as Record<string, number> | undefined
+
+  // Engagement scope for chat envelope: only when an engagement is selected.
+  // Browsing the table without selection ≠ engagement scope.
+  useChatScope({ engagement_id: selected?.engagement_id ?? null })
 
   useSurfaceExtras('page:engagements', {
     visible_panels: [

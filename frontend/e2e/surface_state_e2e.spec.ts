@@ -87,6 +87,77 @@ test.describe('Mai surface state per route', () => {
     expect(['se', 'me']).toContain(extra.pipeline_mode)
   })
 
+  test('first-turn /pipeline SE: no engagement scope leakage', async ({ page }) => {
+    // Architectural guard: SE pipeline mode publishes engagement_id=null to
+    // ChatScopeContext, so MaiPanel sends NO engagement_id in the canonical
+    // envelope. Assembler therefore loads NO engagement memory and NO Layer 3
+    // policies. Mai's first turn cannot describe an "engagement" because none
+    // is in scope. This is the architectural fix for the Meridian/Cascadia
+    // hallucination on SE — no prompt-level "be careful" instructions, the
+    // memory simply isn't loaded.
+    const pushes: any[] = []
+    page.on('request', (req) => {
+      if (req.url().includes('/api/mcp/surface-state') && req.method() === 'POST') {
+        try {
+          pushes.push(JSON.parse(req.postData() ?? '{}'))
+        } catch { /* ignore */ }
+      }
+    })
+
+    // Fresh session_id forces a fresh Mai context (no prior turns to lean on).
+    await page.addInitScript(() => {
+      try { localStorage.removeItem('mai.session_id') } catch { /* ignore */ }
+    })
+    await page.goto('/pipeline')
+    await page.waitForTimeout(1500)
+    const latest = pushes.filter((p) => p.route === '/pipeline').pop()
+    expect(latest, 'no /pipeline push seen').toBeTruthy()
+    const sessionId = latest.session_id as string
+
+    // Confirm the snapshot reflects SE mode (the default selection on /pipeline).
+    expect(latest.extra?.pipeline_mode).toBe('se')
+    expect(latest.extra?.me_engagement_id ?? null).toBeNull()
+
+    const resp = await fetch(`${PLATFORM}/api/mai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: 'what pipeline mode am I currently viewing?',
+        session_id: sessionId,
+        surface_id: 'console',
+        tenant_id: '69688df3-fc8e-51f8-a77c-9c13f9b3a784',
+        operator_id: 'ilya',
+        page_context: { route: '/pipeline', current_page: 'pipeline' },
+        // Critical: no engagement_id in envelope. This is what the Console
+        // produces when on /pipeline SE mode after the ChatScopeContext fix.
+      }),
+    })
+    const text = await resp.text()
+    const lower = text.toLowerCase()
+
+    // Tool result must reflect the snapshot (route + extras present).
+    expect(text).toContain('"route": "/pipeline"')
+    expect(text).toContain('"pipeline_mode": "se"')
+
+    // Final answer must identify SE mode (snapshot ground truth).
+    expect(lower).toMatch(/\bse\b|single[- ]entity/)
+
+    // First-turn hallucination guard: Mai must NOT claim there's an active
+    // M&A engagement. These phrases were the exact bug. Recent_runs may name
+    // historic engagements, but Mai must not assert the operator is "currently
+    // viewing" or "in" an engagement when none is in scope.
+    const banned = [
+      /currently viewing the [^.]*engagement/i,
+      /you(?:'re| are) (?:currently )?(?:in|viewing|on) the [^.]*\bengagement\b/i,
+      /meridian\s*(?:→|->|to)\s*cascadia\s+engagement/i,
+      /active engagement[: ]+meridian/i,
+      /active engagement[: ]+cascadia/i,
+    ]
+    for (const pat of banned) {
+      expect(text, `hallucinated engagement context matched ${pat}`).not.toMatch(pat)
+    }
+  })
+
   test('Mai chat on /pipeline returns route + extras (no "no snapshot" note)', async ({ page }) => {
     const pushes: any[] = []
     page.on('request', (req) => {

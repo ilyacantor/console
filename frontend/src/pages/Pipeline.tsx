@@ -26,6 +26,7 @@ import {
 import { useHealth } from '../context/HealthContext'
 import { useEngagement } from '../context/EngagementContext'
 import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
+import { useChatScope } from '../context/ChatScopeContext'
 
 // ── Status helpers ──────────────────────────────────────────────────
 
@@ -634,6 +635,15 @@ export default function Pipeline() {
   const canStart = !hasActiveJob || jobTerminal
 
   const selectedStep = jobData?.steps.find((s) => s.name === selectedStepName)
+
+  // Engagement scope only when ME mode AND a Convergence engagement is selected.
+  // SE mode is single-entity — no engagement scope, no Meridian/Cascadia memory.
+  useChatScope({
+    engagement_id:
+      selectedMode === 'me'
+        ? selectedConvergenceEngagement?.engagement_id ?? null
+        : null,
+  })
 
   useSurfaceExtras('page:pipeline', {
     visible_panels: [
