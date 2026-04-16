@@ -6,6 +6,7 @@ import {
   type ChangeEvent,
   type ChangeSummary,
 } from '../api/client'
+import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#EF4444',
@@ -146,6 +147,29 @@ export default function Changes() {
     const absTime = new Date(oldestEv.timestamp).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
     sinceText = `${absTime} (${timeAgo(oldestEv.timestamp)})`
   }
+
+  useSurfaceExtras('page:changes', {
+    visible_panels: ['severity filters', 'module filters', 'events feed'],
+    active_selection: expandedId ? { event_id: expandedId } : null,
+    extra: {
+      page: 'changes',
+      critical_count: summary?.critical ?? 0,
+      warning_count: summary?.warning ?? 0,
+      info_count: summary?.info ?? 0,
+      last_scan_at: summary?.last_scan ?? null,
+      severity_filter: severityFilter,
+      module_filters: Array.from(moduleFilters),
+      total_events: events.length,
+      recent_events: events.slice(0, 5).map((e) => ({
+        id: e.id,
+        summary: e.summary,
+        severity: e.severity,
+        module: e.source_module,
+        timestamp: e.timestamp,
+        acknowledged: e.acknowledged,
+      })),
+    },
+  })
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchEngagements, createEngagement, fetchRuns, fetchEngagementHistory, type Engagement, type EngagementHistoryEvent } from '../api/client'
 import { useEngagement } from '../context/EngagementContext'
+import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
 
 function TypePill({ type }: { type: string }) {
   const colors: Record<string, { bg: string; text: string }> = {
@@ -133,6 +134,52 @@ export default function Engagements() {
   }, [selected?.engagement_id])
 
   const state = selected?.state_json as Record<string, number> | undefined
+
+  useSurfaceExtras('page:engagements', {
+    visible_panels: [
+      'engagements table',
+      ...(showCreate ? ['new engagement form'] : []),
+      ...(selected ? ['deal state panel', 'history panel'] : []),
+    ],
+    active_selection: selected
+      ? {
+          engagement_id: selected.engagement_id,
+          short_name: selected.engagement_short_name ?? null,
+          acquirer: selected.acquirer_entity_id,
+          target: selected.target_entity_id,
+          type: selected.engagement_type,
+          lifecycle_stage: selected.lifecycle_stage,
+        }
+      : null,
+    last_errors: error ? [error] : [],
+    extra: {
+      page: 'engagements',
+      total_engagements: engagements.length,
+      active_engagement_id: activeEngagement?.engagement_id ?? null,
+      show_create_form: showCreate,
+      available_entities: entities,
+      engagements: engagements.map((e) => ({
+        engagement_id: e.engagement_id,
+        short_name: e.engagement_short_name ?? null,
+        acquirer: e.acquirer_entity_id,
+        target: e.target_entity_id,
+        type: e.engagement_type,
+        lifecycle_stage: e.lifecycle_stage,
+        updated_at: e.updated_at,
+      })),
+      selected_state: selected
+        ? {
+            conflicts_resolved: state?.conflicts_resolved ?? 0,
+            conflicts_total: state?.conflicts_total ?? 0,
+            deliverables_ready: state?.deliverables_ready ?? 0,
+            total_cost_usd: state?.total_cost ?? 0,
+            total_runs: state?.total_runs ?? 0,
+            total_tokens: state?.total_tokens ?? 0,
+            history_events: history.length,
+          }
+        : null,
+    },
+  })
 
   return (
     <div style={{ padding: '24px', maxWidth: '960px' }}>

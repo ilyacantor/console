@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { fetchOperatorFeedPlans, type MaiPlan, type MaiPlansResponse } from '../api/client'
 import { useEngagement } from '../context/EngagementContext'
+import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
 
 const REFRESH_INTERVAL_MS = 30_000
 
@@ -247,6 +248,29 @@ export default function OperatorFeed() {
     border: '1px solid var(--border)', borderRadius: '4px',
     background: 'var(--bg-card)', color: 'var(--text-primary)',
   }
+
+  useSurfaceExtras('page:operator-feed', {
+    visible_panels: ['tier filter', 'status filter', 'plan cards', 'auto-refresh indicator'],
+    last_errors: error ? [error] : [],
+    extra: {
+      page: 'operator-feed',
+      tier_filter: tierFilter,
+      status_filter: statusFilter,
+      tenant_id: tenantId ?? null,
+      total_plans: total,
+      visible_plans: plans.length,
+      last_refresh_at: lastRefresh?.toISOString() ?? null,
+      auto_refresh_seconds: REFRESH_INTERVAL_MS / 1000,
+      recent_plans: plans.slice(0, 5).map((p) => ({
+        id: p.id,
+        tier: p.plan_type,
+        status: p.status,
+        title: p.title,
+        affected_modules: p.affected_modules,
+        created_at: p.created_at,
+      })),
+    },
+  })
 
   return (
     <div style={{ padding: '24px', maxWidth: '720px' }}>

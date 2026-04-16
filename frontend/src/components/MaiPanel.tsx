@@ -29,6 +29,7 @@ import { useMaiStream } from '../hooks/useMaiStream';
 import { usePolledData } from '../hooks/usePolledData';
 import { useEngagement } from '../context/EngagementContext';
 import { capitalize } from '../utils/format';
+import { getOrCreateSessionId, resetSessionId } from '../utils/chatSession';
 import { buildPresets } from './mai/presets';
 
 // ---------------------------------------------------------------------------
@@ -85,24 +86,6 @@ function formatMessagesAsMarkdown(messages: FloatMessage[]): string {
 // Component
 // ---------------------------------------------------------------------------
 
-const SESSION_ID_STORAGE_KEY = 'mai.session_id';
-
-function loadOrCreateSessionId(): string {
-  try {
-    const existing = window.localStorage.getItem(SESSION_ID_STORAGE_KEY);
-    if (existing) return existing;
-  } catch {
-    // localStorage unavailable — fall through to new id
-  }
-  const fresh = `float-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  try {
-    window.localStorage.setItem(SESSION_ID_STORAGE_KEY, fresh);
-  } catch {
-    // ignore
-  }
-  return fresh;
-}
-
 interface HistoryTurn {
   id: string;
   turn_index: number;
@@ -114,7 +97,7 @@ interface HistoryTurn {
 export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
   const [mode, setMode] = useState<FloatMode>('dormant');
   const [messages, setMessages] = useState<FloatMessage[]>([]);
-  const [sessionId, setSessionId] = useState(loadOrCreateSessionId);
+  const [sessionId, setSessionId] = useState(getOrCreateSessionId);
   const [input, setInput] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -352,13 +335,7 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
       return;
     }
     setMessages([]);
-    const fresh = `float-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    setSessionId(fresh);
-    try {
-      window.localStorage.setItem(SESSION_ID_STORAGE_KEY, fresh);
-    } catch {
-      // ignore
-    }
+    setSessionId(resetSessionId());
     setMenuOpen(false);
     setConfirmClear(false);
   };

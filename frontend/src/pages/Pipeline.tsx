@@ -25,6 +25,7 @@ import {
 } from '../api/client'
 import { useHealth } from '../context/HealthContext'
 import { useEngagement } from '../context/EngagementContext'
+import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
 
 // ── Status helpers ──────────────────────────────────────────────────
 
@@ -633,6 +634,40 @@ export default function Pipeline() {
   const canStart = !hasActiveJob || jobTerminal
 
   const selectedStep = jobData?.steps.find((s) => s.name === selectedStepName)
+
+  useSurfaceExtras('page:pipeline', {
+    visible_panels: [
+      'mode selector',
+      'engagement selector',
+      'pipeline steps',
+      'run history',
+    ],
+    active_selection: selectedStepName ? { step_name: selectedStepName } : null,
+    last_errors: error ? [error] : [],
+    extra: {
+      page: 'pipeline',
+      pipeline_mode: selectedMode,
+      execution_mode: executionMode,
+      me_engagement_id: selectedConvergenceEngagement?.engagement_id ?? null,
+      me_engagement_label: selectedConvergenceEngagement
+        ? `${selectedConvergenceEngagement.acquirer_entity_id} -> ${selectedConvergenceEngagement.target_entity_id}`
+        : null,
+      active_run_id: activePipelineRunId,
+      active_run_status: jobData?.status ?? null,
+      active_run_terminal: jobTerminal,
+      active_run_name: jobData?.run_name ?? null,
+      step_statuses: (jobData?.steps ?? []).map((s) => ({
+        name: s.name,
+        status: s.status,
+        duration_ms: s.duration_ms ?? null,
+      })),
+      recent_runs: runs.slice(0, 5).map((r) => ({
+        run_name: r.run_name,
+        status: r.status,
+        started_at: r.started_at,
+      })),
+    },
+  })
 
   return (
     <div>

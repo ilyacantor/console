@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchInstrumentationRuns, fetchInstrumentationSummary, type MaiRun, type InstrumentationSummary } from '../api/client'
 import { useEngagement } from '../context/EngagementContext'
+import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
 
 function SummaryCard({ label, value }: { label: string; value: string }) {
   return (
@@ -69,6 +70,32 @@ export default function Instrumentation() {
 
   const totalCost = summary?.total_cost ?? 0
   const totalRuns = summary?.total_runs ?? 0
+
+  useSurfaceExtras('page:instrumentation', {
+    visible_panels: ['summary cards', 'step filter', 'runs table'],
+    extra: {
+      page: 'instrumentation',
+      engagement_id: activeEngagement?.engagement_id ?? null,
+      step_filter: filter,
+      sort_key: sortKey,
+      sort_ascending: sortAsc,
+      total_runs: totalRuns,
+      total_tokens: summary?.total_tokens ?? 0,
+      total_cost_usd: totalCost,
+      avg_duration_s: summary?.avg_duration_s ?? 0,
+      visible_runs: sorted.length,
+      step_names: stepNames,
+      recent_runs: sorted.slice(0, 5).map((r) => ({
+        mai_run_id: r.mai_run_id,
+        step_name: r.step_name,
+        run_tag: r.run_tag,
+        duration_s: r.duration_s,
+        tokens: (r.tokens_in ?? 0) + (r.tokens_out ?? 0),
+        cost_usd: r.cost_usd,
+        status: r.status,
+      })),
+    },
+  })
 
   return (
     <div style={{ padding: '24px', maxWidth: '960px' }}>
