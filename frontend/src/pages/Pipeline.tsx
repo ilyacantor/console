@@ -658,9 +658,18 @@ export default function Pipeline() {
       active_run_name: jobData?.run_name ?? null,
       step_statuses: (jobData?.steps ?? []).map((s) => ({
         name: s.name,
+        display_name: s.display_name,
         status: s.status,
         duration_ms: s.duration_ms ?? null,
+        message: s.message,
       })),
+      failed_steps: (jobData?.steps ?? [])
+        .filter((s) => s.status === 'failed')
+        .map((s) => ({
+          name: s.name,
+          display_name: s.display_name,
+          message: s.message,
+        })),
       recent_runs: runs.slice(0, 5).map((r) => ({
         run_name: r.run_name,
         status: r.status,
