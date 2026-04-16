@@ -15,6 +15,7 @@ const ROUTES: { path: string; expectedPanel: string | RegExp }[] = [
   { path: '/operator-feed', expectedPanel: /plan cards|status filter|tier filter/ },
   { path: '/instrumentation', expectedPanel: /runs table|summary cards/ },
   { path: '/engagements', expectedPanel: /engagements table/ },
+  { path: '/config', expectedPanel: /cron schedules|module urls|detection thresholds|entity configuration/i },
 ]
 
 async function fetchSnapshot(sessionId: string) {

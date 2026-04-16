@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fetchConfig, updateConfig, fetchEngagements, fetchCronLastRuns } from '../api/client'
+import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
 
 interface CronSchedule {
   interval_minutes: number
@@ -65,6 +66,23 @@ export default function Config() {
     }
     setSaving(null)
   }
+
+  const surfaceExtras = useMemo(() => ({
+    visible_panels: [
+      'Cron schedules', 'Module URLs', 'Detection thresholds', 'Entity configuration',
+    ],
+    extra: {
+      page: 'config',
+      cron_schedules: cron,
+      module_urls: urls,
+      detection_thresholds: thresholds,
+      entity_config: entityConfig,
+      cron_last_runs: lastRuns,
+      active_entities: entityNames,
+      load_error: error,
+    },
+  }), [cron, urls, thresholds, entityConfig, lastRuns, entityNames, error])
+  useSurfaceExtras('config', loaded ? surfaceExtras : null)
 
   if (!loaded) return <div style={{ padding: '24px', color: 'var(--text-muted)', fontSize: '13px' }}>Loading...</div>
 
