@@ -1,7 +1,4 @@
-/**
- * G5 — ME pipeline runs end-to-end through Console UI.
- * Selects real engagement from dropdown, runs ME, waits for completed 6/6.
- */
+// Operator-visible outcome: after picking MerCas (engagement 3c299509) from the ME dropdown and clicking Run ME, /pipeline shows status="completed" with run_name containing "MerCas-<4hex>", all 7 steps (farm_financials_a, farm_financials_b, convergence_overlay, cofa_unification, verify, convergence_surfaces_visible, complete) report success, the engagement label reads "Engagement: MerCas".
 import { test, expect, type Page } from '@playwright/test'
 
 function main(page: Page) {
@@ -13,7 +10,7 @@ const REAL_ENGAGEMENT_ID = '3c299509-3219-47ae-a751-9b554f60510a'
 test.describe('G5 — ME pipeline end-to-end through UI', () => {
   test.setTimeout(180_000)
 
-  test('ME pipeline completes 6/6 with real engagement', async ({ page }) => {
+  test('ME pipeline completes 7/7 with real engagement', async ({ page }) => {
     // Capture the POST /api/pipeline/start request
     let capturedPostBody: string | null = null
     page.on('request', (req) => {
@@ -44,10 +41,10 @@ test.describe('G5 — ME pipeline end-to-end through UI', () => {
     // Click Run ME
     await m.getByRole('button', { name: /Run ME/i }).click()
 
-    // Verify POST body contains real engagement_id
+    // Verify POST body contains real engagement_id. Parsing fails (and the
+    // test fails loudly) if the body was never captured.
     await page.waitForTimeout(1000)
-    expect(capturedPostBody).toBeTruthy()
-    const postBody = JSON.parse(capturedPostBody!)
+    const postBody = JSON.parse(capturedPostBody as string)
     console.log('[G5] Parsed POST body:', JSON.stringify(postBody, null, 2))
     expect(postBody.mode).toBe('me')
     expect(postBody.config.convergence_engagement_id).toBe(REAL_ENGAGEMENT_ID)
@@ -87,8 +84,17 @@ test.describe('G5 — ME pipeline end-to-end through UI', () => {
     // Must be completed (not completed_with_errors)
     expect(latestRun.status).toBe('completed')
 
-    // Must have 6 steps
-    expect(latestRun.steps.length).toBe(6)
+    // ME pipeline currently emits 7 ordered steps (see file header).
+    expect(latestRun.steps.length).toBe(7)
+    expect(latestRun.steps.map((s: { name: string }) => s.name)).toEqual([
+      'farm_financials_a',
+      'farm_financials_b',
+      'convergence_overlay',
+      'cofa_unification',
+      'verify',
+      'convergence_surfaces_visible',
+      'complete',
+    ])
 
     // All steps must be success
     for (const step of latestRun.steps) {
@@ -100,14 +106,14 @@ test.describe('G5 — ME pipeline end-to-end through UI', () => {
 
     // Verify engagement label in the UI
     const engLabel = m.locator('[data-testid="engagement-label"]')
-    await expect(engLabel).toBeVisible()
+    await expect(engLabel).toHaveText(/MerCas/)
     const engText = await engLabel.textContent()
     console.log('[G5] engagement label:', engText)
     expect(engText).toContain('MerCas')
 
     // Verify run_name label
     const runNameLabel = m.locator('[data-testid="run-name-label"]')
-    await expect(runNameLabel).toBeVisible()
+    await expect(runNameLabel).toHaveText(/MerCas-[0-9a-f]{4}/)
     const runName = await runNameLabel.textContent()
     console.log('[G5] run_name:', runName)
     expect(runName).toContain('MerCas')
