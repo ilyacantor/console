@@ -65,14 +65,19 @@ async def _ensure_schema() -> None:
     async with _pool.acquire() as conn:
         await conn.execute("CREATE SCHEMA IF NOT EXISTS console")
         # Brain-A Part 2b: rename legacy console.maestra_runs -> console.mai_runs.
-        # Idempotent: guarded by existence check on the OLD name. Must run before
-        # CREATE TABLE IF NOT EXISTS mai_runs below, otherwise both tables coexist.
+        # Idempotent: only renames when maestra_runs exists AND mai_runs does
+        # not. If both exist (partial migration leftover), do nothing — the
+        # canonical mai_runs is the live table; the stale maestra_runs is
+        # harmless and dropping it is out of scope for an idempotent boot.
         await conn.execute("""
             DO $$
             BEGIN
                 IF EXISTS (
                     SELECT 1 FROM pg_tables
                     WHERE schemaname = 'console' AND tablename = 'maestra_runs'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM pg_tables
+                    WHERE schemaname = 'console' AND tablename = 'mai_runs'
                 ) THEN
                     ALTER TABLE console.maestra_runs RENAME TO mai_runs;
                 END IF;
@@ -206,6 +211,23 @@ async def _ensure_schema() -> None:
                 checks JSONB NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
+        """)
+        # Persistent surface-state snapshots for Mai's get_surface_state tool.
+        # Replaces the in-memory dict in app/routes/mcp.py so snapshots survive
+        # pm2 restart (resolves console_deferred_work.md #8).
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS console.surface_state_snapshots (
+                session_id    TEXT PRIMARY KEY,
+                tenant_id     TEXT,
+                route         TEXT,
+                payload       JSONB NOT NULL,
+                payload_hash  TEXT NOT NULL,
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_surface_state_snapshots_updated_at
+                ON console.surface_state_snapshots (updated_at)
         """)
 
 

@@ -11,28 +11,36 @@ Tools exposed:
 Per Mai v8 blueprint §5.2 every surface MCP server must expose
 `get_surface_state`. Additional Console-specific tools can be added to
 `_handle_tool_call` as the surface grows.
+
+Storage is `console.surface_state_snapshots` (Postgres). Survives pm2
+restart so an idle operator does not lose Mai's page-state context.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import os
 from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from backend.app import db
+
 router = APIRouter()
+logger = logging.getLogger("console.mcp")
 
 _VALID_API_KEYS = {
     os.environ.get("CONSOLE_MCP_API_KEY") or os.environ.get("MCP_API_KEY") or "console-mcp-key-v1",
     "console-mcp-test-key",
 }
 
-# In-memory surface state store. Key = session_id; value = latest snapshot
-# the frontend pushed via POST /api/mcp/surface-state. Single-process dev
-# deployment only — when Console moves to multi-worker we will promote this
-# to Redis / the shared DB.
-_SURFACE_STATE: dict[str, dict[str, Any]] = {}
+# Snapshots older than this are reaped on the next read. Sessions that don't
+# return inside the window are gone — the frontend will push fresh on the next
+# navigation. Avoids unbounded growth across abandoned tabs.
+_TTL_HOURS = 24
 
 
 class MCPToolCall(BaseModel):
@@ -50,6 +58,7 @@ class MCPToolResult(BaseModel):
 
 class SurfaceStateUpdate(BaseModel):
     session_id: str
+    tenant_id: str | None = None
     route: str | None = None
     active_engagement_id: str | None = None
     visible_panels: list[str] = Field(default_factory=list)
@@ -60,6 +69,89 @@ class SurfaceStateUpdate(BaseModel):
 
 def _validate_api_key(api_key: str | None) -> bool:
     return api_key is not None and api_key in _VALID_API_KEYS
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def _store_snapshot(
+    session_id: str,
+    tenant_id: str | None,
+    route: str | None,
+    payload: dict[str, Any],
+) -> None:
+    """Upsert snapshot. Hash-skips when payload is identical to existing row,
+    so updated_at remains a real freshness signal (idle heartbeats from the
+    frontend cost zero writes)."""
+    pool = db.get_pool()
+    if pool is None:
+        # Fail loud — silent fallback would let Mai's page-state path silently
+        # degrade. Per blueprint §A1 / §12, surface failure to the caller.
+        raise RuntimeError(
+            "surface-state push: Console DB pool unavailable — "
+            "snapshot cannot be persisted."
+        )
+    payload_hash = _hash_payload(payload)
+    async with pool.acquire() as conn:
+        existing_hash = await conn.fetchval(
+            """
+            SELECT payload_hash FROM console.surface_state_snapshots
+            WHERE session_id = $1
+            """,
+            session_id,
+        )
+        if existing_hash == payload_hash:
+            return
+        await conn.execute(
+            """
+            INSERT INTO console.surface_state_snapshots
+                (session_id, tenant_id, route, payload, payload_hash, updated_at)
+            VALUES ($1, $2, $3, $4::jsonb, $5, NOW())
+            ON CONFLICT (session_id) DO UPDATE
+                SET tenant_id    = EXCLUDED.tenant_id,
+                    route        = EXCLUDED.route,
+                    payload      = EXCLUDED.payload,
+                    payload_hash = EXCLUDED.payload_hash,
+                    updated_at   = NOW()
+            """,
+            session_id,
+            tenant_id,
+            route,
+            json.dumps(payload, default=str),
+            payload_hash,
+        )
+
+
+async def _load_snapshot(session_id: str) -> dict[str, Any] | None:
+    """Read the snapshot for session_id. Sweeps stale rows opportunistically."""
+    pool = db.get_pool()
+    if pool is None:
+        raise RuntimeError(
+            "get_surface_state: Console DB pool unavailable — "
+            "snapshot cannot be read."
+        )
+    async with pool.acquire() as conn:
+        await conn.execute(
+            f"""
+            DELETE FROM console.surface_state_snapshots
+            WHERE updated_at < NOW() - INTERVAL '{_TTL_HOURS} hours'
+            """
+        )
+        row = await conn.fetchrow(
+            """
+            SELECT payload FROM console.surface_state_snapshots
+            WHERE session_id = $1
+            """,
+            session_id,
+        )
+    if row is None:
+        return None
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    return payload
 
 
 @router.get("/info")
@@ -99,7 +191,7 @@ async def mcp_tool_call(call: MCPToolCall) -> MCPToolResult:
             error="Authentication required. Provide a valid api_key.",
         )
     try:
-        return _handle_tool_call(call)
+        return await _handle_tool_call(call)
     except Exception as exc:  # noqa: BLE001 — surface failure in the result
         return MCPToolResult(
             tool=call.tool,
@@ -110,11 +202,10 @@ async def mcp_tool_call(call: MCPToolCall) -> MCPToolResult:
 
 @router.post("/surface-state")
 async def update_surface_state(update: SurfaceStateUpdate) -> dict[str, str]:
-    """Frontend pushes the latest surface snapshot here on route/selection changes.
-
-    The snapshot is stored per session_id and returned verbatim by
-    get_surface_state when Mai calls the MCP tool.
-    """
+    """Frontend pushes the latest surface snapshot here on route/selection changes
+    or via the 60s idle heartbeat in useSurfaceState. Persisted in
+    console.surface_state_snapshots so Mai's get_surface_state tool returns the
+    same data after a console-backend pm2 restart."""
     snapshot: dict[str, Any] = {
         "session_id": update.session_id,
         "route": update.route,
@@ -125,11 +216,16 @@ async def update_surface_state(update: SurfaceStateUpdate) -> dict[str, str]:
     }
     if update.extra:
         snapshot["extra"] = update.extra
-    _SURFACE_STATE[update.session_id] = snapshot
+    await _store_snapshot(
+        session_id=update.session_id,
+        tenant_id=update.tenant_id,
+        route=update.route,
+        payload=snapshot,
+    )
     return {"status": "ok", "session_id": update.session_id}
 
 
-def _handle_tool_call(call: MCPToolCall) -> MCPToolResult:
+async def _handle_tool_call(call: MCPToolCall) -> MCPToolResult:
     if call.tool == "get_surface_state":
         session_id = call.arguments.get("session_id")
         if not session_id:
@@ -138,7 +234,7 @@ def _handle_tool_call(call: MCPToolCall) -> MCPToolResult:
                 success=False,
                 error="get_surface_state: missing required 'session_id'.",
             )
-        snapshot = _SURFACE_STATE.get(session_id)
+        snapshot = await _load_snapshot(session_id)
         if snapshot is None:
             return MCPToolResult(
                 tool=call.tool,

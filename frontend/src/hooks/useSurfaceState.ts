@@ -5,20 +5,33 @@
  * "no snapshot pushed yet".
  *
  * Mount once at App level via <SurfaceStateSync/>. Re-pushes whenever the
- * route, active engagement, or any page's published extras change.
+ * route, active engagement, or any page's published extras change. Also fires
+ * a 60s heartbeat through the same publish path so an idle page recovers from
+ * a console-backend restart without waiting for the operator to navigate.
+ * The backend hash-skips identical payloads, so the heartbeat costs zero
+ * DB writes when nothing has changed.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useEngagement } from '../context/EngagementContext';
 import { useSurfaceExtrasAll } from '../context/SurfaceExtrasContext';
 import { getOrCreateSessionId } from '../utils/chatSession';
+
+const HEARTBEAT_MS = 60_000;
 
 export function useSurfaceState() {
   const location = useLocation();
   const { activeEngagement } = useEngagement();
   const extras = useSurfaceExtrasAll();
   const lastSentRef = useRef<string>('');
+  const lastPublishAtRef = useRef<number>(0);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), HEARTBEAT_MS);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const sessionId = getOrCreateSessionId();
@@ -32,8 +45,11 @@ export function useSurfaceState() {
       extra: extras.extra ?? {},
     };
     const serialized = JSON.stringify(payload);
-    if (serialized === lastSentRef.current) return;
+    const now = Date.now();
+    const stale = now - lastPublishAtRef.current >= HEARTBEAT_MS;
+    if (serialized === lastSentRef.current && !stale) return;
     lastSentRef.current = serialized;
+    lastPublishAtRef.current = now;
     void fetch('/api/mcp/surface-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -47,5 +63,6 @@ export function useSurfaceState() {
     location.pathname,
     activeEngagement?.engagement_id,
     extras,
+    tick,
   ]);
 }

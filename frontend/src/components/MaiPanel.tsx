@@ -352,12 +352,6 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
   };
 
   // -------------------------------------------------------------------
-  // Engagement label
-  // -------------------------------------------------------------------
-  const engagementLabel = activeEngagement
-    ? `${capitalize(activeEngagement.acquirer_entity_id)} \u2192 ${capitalize(activeEngagement.target_entity_id)}`
-    : null;
-
   // -------------------------------------------------------------------
   // Presets for current page — §9 generalization: M&A presets only on
   // Convergence routes with an active engagement.
@@ -397,14 +391,6 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
           >
             Mai
           </span>
-          {engagementLabel && (
-            <span
-              className="text-xs truncate"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              {engagementLabel}
-            </span>
-          )}
         </div>
         <div className="flex items-center gap-1">
           {/* Three-dot menu */}

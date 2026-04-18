@@ -8,6 +8,9 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM pg_tables
         WHERE schemaname = 'console' AND tablename = 'maestra_runs'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM pg_tables
+        WHERE schemaname = 'console' AND tablename = 'mai_runs'
     ) THEN
         ALTER TABLE console.maestra_runs RENAME TO mai_runs;
     END IF;
