@@ -14,6 +14,12 @@ import httpx
 CONVERGENCE_BASE_URL = os.environ.get("CONVERGENCE_BASE_URL", "http://localhost:8010").rstrip("/")
 
 _TIMEOUT = 10.0
+# Aggregate-report endpoints (merge overview, P&L combined, QoE combined)
+# fan out into 12+ sequential DB queries on the Convergence side; under
+# post-ingest load they legitimately take 5–15s. The 10s default is sized
+# for CRUD-style calls and times out before the server is done. Reports
+# get a higher ceiling because the server is doing real work, not stalling.
+_REPORTS_TIMEOUT = 30.0
 
 
 async def create_engagement(acquirer_entity_id: str, target_entity_id: str,
@@ -129,7 +135,7 @@ async def get_merge_overview(
         params["acquirer_id"] = acquirer_id
     if target_id:
         params["target_id"] = target_id
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_REPORTS_TIMEOUT) as client:
         resp = await client.get(
             f"{CONVERGENCE_BASE_URL}/api/convergence/merge/overview",
             params=params,
@@ -150,7 +156,7 @@ async def get_pnl_income_statement(
         params["pipeline_run_id"] = pipeline_run_id
     if period:
         params["period"] = period
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_REPORTS_TIMEOUT) as client:
         resp = await client.get(
             f"{CONVERGENCE_BASE_URL}/api/convergence/reports/v2/combining/income-statement",
             params=params,
@@ -168,7 +174,7 @@ async def get_qoe_combined(
         params["tenant_id"] = tenant_id
     if pipeline_run_id:
         params["pipeline_run_id"] = pipeline_run_id
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_REPORTS_TIMEOUT) as client:
         resp = await client.get(
             f"{CONVERGENCE_BASE_URL}/api/convergence/reports/v2/qoe/combined",
             params=params,
