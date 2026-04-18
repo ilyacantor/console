@@ -1679,6 +1679,29 @@ async def _me_preflight(
             f"lifecycle_stage={lifecycle_stage!r} (must be 'active'). "
             f"Only active engagements can run the ME pipeline.")
 
+    # Promote the dispatched engagement so it wins the
+    # `get_active_engagement(tenant)` ORDER BY updated_at DESC tie-break
+    # against any other coexisting active engagements for this tenant. The
+    # downstream verify_merge step asserts that /engagements/active returns
+    # what we dispatched — without this, two coexisting active engagements
+    # race by stale updated_at and one of them silently fails verify.
+    promote_url = (f"{convergence_url}/api/convergence/engagements/"
+                   f"{engagement_id}/promote")
+    try:
+        promote_resp = await client.post(promote_url, headers=_json_headers())
+    except httpx.ConnectError:
+        raise RuntimeError(
+            f"ME pre-flight — Could not reach Convergence to promote "
+            f"engagement at {promote_url} — connection refused")
+    except httpx.TimeoutException:
+        raise RuntimeError(
+            f"ME pre-flight — Convergence promote timed out at {promote_url}")
+    if promote_resp.status_code != 200:
+        raise RuntimeError(
+            f"ME pre-flight — Convergence returned {promote_resp.status_code} "
+            f"promoting engagement {engagement_id}: "
+            f"{_extract_error(promote_resp)}")
+
     # Populate context from Convergence engagement
     context["convergence_engagement_id"] = str(eng["engagement_id"])
     short_name = eng.get("short_name") or eng.get("engagement_short_name", "")

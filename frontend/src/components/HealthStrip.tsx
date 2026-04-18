@@ -12,7 +12,7 @@ interface Props {
 
 export default function HealthStrip({ services }: Props) {
   return (
-    <div className="flex gap-3 flex-wrap">
+    <div data-testid="health-strip" className="flex gap-3 flex-wrap">
       {services.map((svc) => (
         <div
           key={svc.name}
