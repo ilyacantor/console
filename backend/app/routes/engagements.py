@@ -90,6 +90,17 @@ async def get_engagement_conflicts(engagement_id: str):
     return {"conflicts": conflicts}
 
 
+@router.get("/{engagement_id}/resolutions/summary")
+async def get_resolutions_summary(engagement_id: str):
+    """Get resolver resolution summary from Convergence."""
+    try:
+        return await convergence_client.get_resolutions_summary(engagement_id)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Cannot reach Convergence: {e}")
+
+
 @router.patch("/{engagement_id}")
 async def update_engagement(engagement_id: str, body: EngagementUpdate):
     """Update engagement in Convergence."""

@@ -17,6 +17,7 @@ import Integration from './pages/Integration'
 import Merge from './pages/Merge'
 import Context from './pages/Context'
 import OperatorFeed from './pages/OperatorFeed'
+import ConvergencePage from './pages/Convergence'
 
 export default function App() {
   return (
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/merge" element={<Merge />} />
         <Route path="/context" element={<Context />} />
         <Route path="/operator-feed" element={<OperatorFeed />} />
+        <Route path="/convergence" element={<ConvergencePage />} />
       </Routes>
     </Layout>
   )

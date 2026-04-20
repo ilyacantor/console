@@ -126,6 +126,30 @@ async def get_active_engagement(tenant_id: str) -> dict | None:
         return resp.json()
 
 
+async def get_resolutions_summary(engagement_id: str) -> dict:
+    """Resolver resolution summary — aggregate counts per domain."""
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.get(
+            f"{CONVERGENCE_BASE_URL}/api/convergence/engagements/{engagement_id}/resolutions/summary",
+        )
+        if resp.status_code == 404:
+            return {"per_domain": {}, "totals": {}, "total_decisions": 0}
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def promote_engagement(engagement_id: str) -> dict | None:
+    """Promote engagement lifecycle (e.g., draft -> active)."""
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.post(
+            f"{CONVERGENCE_BASE_URL}/api/convergence/engagements/{engagement_id}/promote",
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def get_merge_overview(
     acquirer_id: str | None = None,
     target_id: str | None = None,

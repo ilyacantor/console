@@ -35,6 +35,7 @@ const MONITOR_FULL: NavSection = {
   items: [
     { label: 'Dashboards', path: '/dashboards', color: '#3B82F6' },
     { label: 'Reports', path: '/reports', color: '#3B82F6' },
+    { label: 'Convergence', path: '/convergence', color: '#06B6D4' },
     { label: 'Context', path: '/context', color: '#3B82F6' },
   ],
 }
@@ -72,6 +73,7 @@ const MONITOR_ALL: NavSection = {
   items: [
     { label: 'Dashboards', path: '/dashboards', color: '#3B82F6' },
     { label: 'Reports', path: '/reports', color: '#3B82F6' },
+    { label: 'Convergence', path: '/convergence', color: '#06B6D4' },
     { label: 'Context', path: '/context', color: '#3B82F6' },
     { label: 'Changes', path: '/changes', color: '#F59E0B' },
     { label: 'Pipeline', path: '/pipeline', color: '#22C55E' },
