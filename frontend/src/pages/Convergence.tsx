@@ -9,12 +9,12 @@ interface ResolutionSummary {
   total_decisions: number
 }
 
-const STAGE_STYLES: Record<string, string> = {
+const STAGE_STYLES = {
   active: 'background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3)',
   draft: 'background: rgba(156,163,175,0.15); color: #9ca3af; border: 1px solid rgba(156,163,175,0.3)',
   paused: 'background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3)',
   archived: 'background: rgba(107,114,128,0.15); color: #6b7280; border: 1px solid rgba(107,114,128,0.3)',
-}
+} satisfies Record<string, string>
 
 function relativeTime(iso: string | null): string {
   if (!iso) return '\u2014'
