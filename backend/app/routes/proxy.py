@@ -26,7 +26,6 @@ MODULE_URLS = {
     "nlq": config.NLQ_BASE_URL,
     "farm": config.FARM_BASE_URL,
     "platform": config.PLATFORM_BASE_URL,
-    "convergence": config.CONVERGENCE_BASE_URL,
 }
 
 PROXY_TIMEOUT = 30.0

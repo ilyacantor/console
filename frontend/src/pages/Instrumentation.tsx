@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { fetchInstrumentationRuns, fetchInstrumentationSummary, type MaiRun, type InstrumentationSummary } from '../api/client'
-import { useEngagement } from '../context/EngagementContext'
 import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
 
 function SummaryCard({ label, value }: { label: string; value: string }) {
@@ -25,7 +24,6 @@ function StatusPill({ status }: { status: string }) {
 type SortKey = 'step_name' | 'duration_s' | 'tokens' | 'cost_usd' | 'status'
 
 export default function Instrumentation() {
-  const { activeEngagement } = useEngagement()
   const [runs, setRuns] = useState<MaiRun[]>([])
   const [summary, setSummary] = useState<InstrumentationSummary | null>(null)
   const [filter, setFilter] = useState<string>('all')
@@ -33,13 +31,11 @@ export default function Instrumentation() {
   const [sortAsc, setSortAsc] = useState(true)
 
   useEffect(() => {
-    const engId = activeEngagement?.engagement_id
-    const params: { step_name?: string; engagement_id?: string } = {}
+    const params: { step_name?: string } = {}
     if (filter !== 'all') params.step_name = filter
-    if (engId) params.engagement_id = engId
     fetchInstrumentationRuns(params).then((r) => setRuns(r.runs)).catch(() => {})
-    fetchInstrumentationSummary(engId).then(setSummary).catch(() => {})
-  }, [filter, activeEngagement?.engagement_id])
+    fetchInstrumentationSummary().then(setSummary).catch(() => {})
+  }, [filter])
 
   const stepNames = [...new Set(runs.map((r) => r.step_name))]
 
@@ -75,7 +71,6 @@ export default function Instrumentation() {
     visible_panels: ['summary cards', 'step filter', 'runs table'],
     extra: {
       page: 'instrumentation',
-      engagement_id: activeEngagement?.engagement_id ?? null,
       step_filter: filter,
       sort_key: sortKey,
       sort_ascending: sortAsc,

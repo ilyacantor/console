@@ -13,7 +13,6 @@ from fastapi.staticfiles import StaticFiles
 from backend.app import config, db
 from backend.app.routes.changes import router as changes_router
 from backend.app.routes.config import router as config_router
-from backend.app.routes.engagements import router as engagements_router
 from backend.app.routes.health import router as health_router
 from backend.app.routes.identity import router as identity_router
 from backend.app.routes.instrumentation import router as instrumentation_router
@@ -69,7 +68,6 @@ app.add_middleware(
 app.include_router(health_router, prefix="/api", tags=["Health"])
 app.include_router(pipeline_router, prefix="/api/pipeline", tags=["Pipeline"])
 app.include_router(proxy_router, prefix="/api/proxy", tags=["Proxy"])
-app.include_router(engagements_router, prefix="/api/engagements", tags=["Engagements"])
 app.include_router(changes_router, prefix="/api/changes", tags=["Changes"])
 app.include_router(config_router, prefix="/api/config", tags=["Config"])
 app.include_router(instrumentation_router, prefix="/api/instrumentation", tags=["Instrumentation"])

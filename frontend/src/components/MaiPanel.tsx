@@ -27,9 +27,6 @@ import {
 import Markdown from 'react-markdown';
 import { useMaiStream } from '../hooks/useMaiStream';
 import { usePolledData } from '../hooks/usePolledData';
-import { useEngagement } from '../context/EngagementContext';
-import { useChatScopeReader } from '../context/ChatScopeContext';
-import { capitalize } from '../utils/format';
 import { getOrCreateSessionId, resetSessionId } from '../utils/chatSession';
 import { buildPresets } from './mai/presets';
 
@@ -52,9 +49,7 @@ interface FloatMessage {
 type FloatMode = 'dormant' | 'chat' | 'side';
 
 interface MaiStatusResponse {
-  engagement_id?: string | null;
   status?: string | null;
-  entity?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,26 +102,7 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const prevEngIdRef = useRef<string | null>(null);
 
-  // -------------------------------------------------------------------
-  // Engagement context (UI display: header label, change-of-engagement
-  // system messages, presets). Engagement scope for the chat envelope
-  // is read separately from ChatScopeContext below.
-  // -------------------------------------------------------------------
-  const { activeEngagement } = useEngagement();
-
-  // -------------------------------------------------------------------
-  // Chat scope (page opt-in for engagement memory loading)
-  // Pages publish via useChatScope; default is null. Engagement memory
-  // and Layer 3 policies only load when scope is published, preventing
-  // Meridian/Cascadia leakage on SE pages or unrelated routes.
-  // -------------------------------------------------------------------
-  const { engagementId: scopedEngagementId } = useChatScopeReader();
-
-  // -------------------------------------------------------------------
-  // Streaming
-  // -------------------------------------------------------------------
   const { sendMessage, isStreaming, streamBuffer, isThinking, error } = useMaiStream({
     onUserMessage: (text) => {
       setMessages((prev) => [
@@ -153,7 +129,6 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
     session_id: sessionId,
     surface_id: 'console',
     page_context: { route: currentPage, current_page: currentPage },
-    engagement_id: scopedEngagementId ?? undefined,
   });
 
   // -------------------------------------------------------------------
@@ -215,26 +190,6 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
       cancelled = true;
     };
   }, [sessionId]);
-
-  // Detect engagement switch from context and inject system message
-  useEffect(() => {
-    const newId = activeEngagement?.engagement_id ?? null;
-    if (prevEngIdRef.current && newId && prevEngIdRef.current !== newId && messages.length > 0) {
-      const name = `${capitalize(activeEngagement!.acquirer_entity_id)} \u2192 ${capitalize(activeEngagement!.target_entity_id)}`;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: 'system',
-          content: `Switched to engagement: ${name}`,
-          timestamp: Date.now(),
-        },
-      ]);
-    }
-    prevEngIdRef.current = newId;
-  }, [activeEngagement?.engagement_id]);
-
-  const hasEngagement = !!activeEngagement;
 
   // -------------------------------------------------------------------
   // Mode transitions
@@ -351,18 +306,8 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
     setConfirmClear(false);
   };
 
-  // -------------------------------------------------------------------
-  // -------------------------------------------------------------------
-  // Presets for current page — §9 generalization: M&A presets only on
-  // Convergence routes with an active engagement.
-  // -------------------------------------------------------------------
   const pageKey = currentPage.replace(/^\//, '').split('/')[0] || 'pipeline';
-  const presets = buildPresets({
-    pageKey,
-    route: currentPage,
-    hasActiveEngagement: !!activeEngagement,
-    isConvergenceRoute: currentPage.startsWith('/convergence'),
-  });
+  const presets = buildPresets({ pageKey, route: currentPage });
   const showPresets = messages.length === 0 && !isStreaming;
 
   // -------------------------------------------------------------------
@@ -697,16 +642,6 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
         >
           M
         </span>
-        {/* Engagement dot */}
-        {hasEngagement && (
-          <span
-            className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
-            style={{
-              backgroundColor: '#0BCAD9',
-              border: '2px solid var(--bg-surface)',
-            }}
-          />
-        )}
         {/* Expanding label */}
         <span
           className="max-w-0 overflow-hidden group-hover:max-w-[120px] transition-all duration-200 whitespace-nowrap text-sm ml-0 group-hover:ml-2"

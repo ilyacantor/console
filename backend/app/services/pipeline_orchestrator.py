@@ -1,19 +1,17 @@
 """Pipeline orchestrator — ported from Platform's operator.py.
 
-Orchestrates SE and ME pipelines by calling each external service's
-real API endpoints. Supports batch (run all steps) and step-by-step
-(run one step at a time) execution modes.
+Orchestrates the SE pipeline by calling each external service's real
+API endpoints. Supports batch (run all steps) and step-by-step (run
+one step at a time) execution modes.
 
 SE pipeline: Farm Snapshot → AOD Discovery → AOD→AAM Handoff →
-             AAM Inference → DCL Ingest → Complete
-ME pipeline: DCL Ingest A ∥ B (parallel) → DCL Ingest Verify →
-             COFA Unification → Complete
+             AAM Inference → DCL Ingest → Verify Data in Ask & Dashboards →
+             Complete
 """
 
 import asyncio
 import logging
 import time
-import uuid
 from datetime import datetime
 from typing import Any
 
@@ -23,11 +21,10 @@ from backend.app import config, db
 from backend.app.models.pipeline import (
     ExecutionMode,
     PipelineJob,
-    PipelineMode,
     PipelineStep,
     StepStatus,
 )
-from backend.app.services import convergence_client, nlq_client
+from backend.app.services import nlq_client
 
 logger = logging.getLogger("console.pipeline")
 
@@ -90,17 +87,13 @@ def _extract_error(resp: httpx.Response) -> str:
 def make_run_name(
     entity_id: str | None,
     pipeline_run_id: str,
-    engagement_short_name: str | None = None,
 ) -> str:
     """Build human-readable run label.
 
-    SE:  {entity_id}-{short_hash}  (e.g., BlueLogic-NEQ8-a9ed)
-    ME:  {engagement_short_name}-{short_hash}  (e.g., MerCas-2571)
+    {entity_id}-{short_hash}  (e.g., BlueLogic-NEQ8-a9ed)
     short_hash = first 4 hex chars of pipeline_run_id (no hyphens).
     """
     short_hash = pipeline_run_id.replace("-", "")[:4]
-    if engagement_short_name:
-        return f"{engagement_short_name}-{short_hash}"
     if entity_id:
         return f"{entity_id}-{short_hash}"
     return short_hash
@@ -123,31 +116,6 @@ def create_se_steps() -> list[PipelineStep]:
         PipelineStep(name="nlq_data_visible",
                      display_name="Verify Data in Ask & Dashboards",
                      message="Confirm NLQ can query and render the new data"),
-        PipelineStep(name="complete", display_name="Pipeline Complete",
-                     message="Summarize pipeline run"),
-    ]
-
-
-def create_me_steps() -> list[PipelineStep]:
-    return [
-        PipelineStep(name="farm_financials_a",
-                     display_name="Farm + Convergence (Acquirer)",
-                     message="Generate & ingest financial triples for acquirer",
-                     parallel_group="entity_ingest"),
-        PipelineStep(name="farm_financials_b",
-                     display_name="Farm + Convergence (Target)",
-                     message="Generate & ingest financial triples for target",
-                     parallel_group="entity_ingest"),
-        PipelineStep(name="convergence_overlay",
-                     display_name="Convergence Multi-Entity Overlay",
-                     message="Generate & ingest customer profile + overlap triples"),
-        PipelineStep(name="cofa_unification", display_name="COFA Unification",
-                     message="Unify charts of accounts via Convergence"),
-        PipelineStep(name="verify", display_name="Verify",
-                     message="Verify COFA output"),
-        PipelineStep(name="convergence_surfaces_visible",
-                     display_name="Verify Merge, Engagements, Reports",
-                     message="Confirm Convergence surfaces can render the new data"),
         PipelineStep(name="complete", display_name="Pipeline Complete",
                      message="Summarize pipeline run"),
     ]
@@ -188,26 +156,11 @@ async def _execute_step(
         elif step.name == "aam_inference":
             await _step_aam_inference(client, step, job, context, t0)
         elif step.name == "farm_financials":
-            await _step_farm_financials(client, step, job, context, t0,
-                                        config_key="farm_config")
-        elif step.name == "farm_financials_a":
-            await _step_farm_financials(client, step, job, context, t0,
-                                        config_key="farm_config_a")
-        elif step.name == "farm_financials_b":
-            await _step_farm_financials(client, step, job, context, t0,
-                                        config_key="farm_config_b")
+            await _step_farm_financials(client, step, job, context, t0)
         elif step.name == "dcl_ingest":
             await _step_dcl_ingest_verify(client, step, job, context, t0)
-        elif step.name == "convergence_overlay":
-            await _step_convergence_overlay(client, step, job, context, t0)
-        elif step.name == "cofa_unification":
-            await _step_cofa_unification(client, step, job, context, t0)
-        elif step.name == "verify":
-            await _step_verify(client, step, job, context, t0)
         elif step.name == "nlq_data_visible":
             await _step_nlq_data_visible(client, step, job, context, t0)
-        elif step.name == "convergence_surfaces_visible":
-            await _step_convergence_surfaces_visible(client, step, job, context, t0)
         elif step.name == "complete":
             _step_complete(step, job, context, t0)
         else:
@@ -233,9 +186,8 @@ async def _step_farm_snapshot(
     t0: float,
 ) -> None:
     """SE Step 1: Create Farm snapshot. Farm owns snapshot identity generation
-    (fresh tenant_id + entity_id per snapshot). In SE mode Farm's entity_id IS
-    the canonical pipeline identity. In ME mode entity_id is set by engagement
-    pre-flight and Farm's value is ignored (only farm_manifest_id is captured)."""
+    (fresh tenant_id + entity_id per snapshot). Farm's entity_id IS the
+    canonical pipeline identity."""
     url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL, "Farm Snapshot")
     cfg = job.config
 
@@ -267,7 +219,7 @@ async def _step_farm_snapshot(
         farm_manifest_id = data.get("farm_manifest_id") or data.get("snapshot_id")
         if farm_manifest_id:
             context["farm_manifest_id"] = farm_manifest_id
-        if job.pipeline_mode == PipelineMode.SE and data.get("entity_id"):
+        if data.get("entity_id"):
             context["entity_id"] = data["entity_id"]
         if data.get("tenant_name"):
             context.setdefault("entity_name", data["tenant_name"])
@@ -305,7 +257,7 @@ async def _step_farm_snapshot(
                                         or data.get("snapshot_id"))
                     if farm_manifest_id:
                         context["farm_manifest_id"] = farm_manifest_id
-                    if job.pipeline_mode == PipelineMode.SE and result.get("entity_id"):
+                    if result.get("entity_id"):
                         context["entity_id"] = result["entity_id"]
                     if result.get("tenant_name"):
                         context.setdefault("entity_name", result["tenant_name"])
@@ -518,13 +470,10 @@ async def _step_farm_financials(
     job: PipelineJob,
     context: dict[str, Any],
     t0: float,
-    config_key: str = "farm_config",
 ) -> None:
-    """Farm manifest intake for financial triple generation.
+    """SE Step 5: Farm manifest intake for financial triple generation.
 
-    Used by SE step 5 (config_key="farm_config"),
-    ME step 1 (config_key="farm_config_a"),
-    ME step 2 (config_key="farm_config_b").
+    Pushes triples to DCL.
     """
     url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL,
                        step.display_name)
@@ -532,7 +481,7 @@ async def _step_farm_financials(
                            step.display_name)
 
     cfg = job.config
-    farm_cfg = cfg.get(config_key, {})
+    farm_cfg = cfg.get("farm_config", {})
 
     pipeline_run_id = context.get("pipeline_run_id", job.pipeline_run_id)
     farm_manifest_id = (context.get("farm_manifest_id")
@@ -554,24 +503,9 @@ async def _step_farm_financials(
     if not entity_id:
         _mark_step(step, StepStatus.FAILED,
                    f"No entity_id available for {step.display_name} — "
-                   f"cannot look up Farm config. Ensure engagement has entity_id set.",
+                   f"Farm Snapshot must succeed first.",
                    start_time=t0)
         return
-
-    # ME mode pushes to Convergence; SE mode pushes to DCL.
-    # Both dcl_url and ingest_url must point to the correct target so
-    # Farm has no fallback path that silently routes ME data to DCL.
-    is_me = config_key in ("farm_config_a", "farm_config_b")
-
-    if is_me:
-        convergence_url = _require_url(
-            "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL,
-            step.display_name)
-        target_dcl_url = f"{convergence_url}/api/convergence/ingest-triples"
-        target_ingest_url = f"{convergence_url}/api/convergence/ingest-triples"
-    else:
-        target_dcl_url = f"{dcl_url}/api/dcl/ingest"
-        target_ingest_url = None
 
     body: dict[str, Any] = {
         "source": {
@@ -580,30 +514,14 @@ async def _step_farm_financials(
             "category": category,
         },
         "target": {
-            "dcl_url": target_dcl_url,
+            "dcl_url": f"{dcl_url}/api/dcl/ingest",
             "tenant_id": tenant_id or "",
             "snapshot_name": snapshot_name,
             "entity_id": entity_id,
+            "triples_id": pipeline_run_id,
         },
+        "farm_manifest_id": farm_manifest_id or pipeline_run_id,
     }
-
-    if target_ingest_url:
-        body["target"]["ingest_url"] = target_ingest_url
-
-    if is_me:
-        # Per-entity farm_manifest_id for Farm provenance + ground truth.
-        # Farm uses triples_id (= pipeline_run_id) as the run_id written
-        # to convergence_triples, so both entity batches share one run_id.
-        body["farm_manifest_id"] = str(uuid.uuid4())
-    else:
-        body["farm_manifest_id"] = pipeline_run_id
-
-    # Pass farm_manifest_id if available (provenance link)
-    if farm_manifest_id:
-        body["farm_manifest_id"] = farm_manifest_id
-
-    # Pipeline-level correlation ID for triple provenance tracking
-    body["target"]["triples_id"] = pipeline_run_id
 
     _started = job.started_at
     body["provenance"] = {
@@ -634,53 +552,33 @@ async def _step_farm_financials(
         if farm_status not in ("completed", "skipped"):
             push = data.get("push_result") or {}
             error_detail = push.get("error") or farm_status
-            _target_label = "Convergence" if is_me else "DCL"
             _mark_step(step, StepStatus.FAILED,
-                       f"{_target_label} ingest failed (Farm status={farm_status}): {error_detail}",
+                       f"DCL ingest failed (Farm status={farm_status}): {error_detail}",
                        data=data, start_time=t0)
             return
 
-        # Capture expansion metrics from ingest
         rows = data.get("rows_generated", 0)
         push = data.get("push_result") or {}
         accepted = push.get("rows_accepted")
         triples_written = push.get("triples_written") or accepted or rows
         source_rows = data.get("source_rows") or rows
 
-        # Capture ingest ID from response — per-entity tracking for ME.
-        # ME uses convergence_ingest_id (per v7.4.1 identifier registry);
-        # SE uses dcl_ingest_id. Farm returns dcl_run_id in push_result.
-        if is_me:
-            _cid = (data.get("convergence_ingest_id")
-                    or push.get("convergence_ingest_id")
-                    or push.get("dcl_run_id")
-                    or data.get("dcl_ingest_id"))
-            if _cid:
-                if config_key == "farm_config_a":
-                    context["convergence_ingest_id_a"] = _cid
-                elif config_key == "farm_config_b":
-                    context["convergence_ingest_id_b"] = _cid
-                context.setdefault("convergence_ingest_ids", []).append(_cid)
-        else:
-            dcl_ingest_id = (data.get("dcl_ingest_id")
-                             or push.get("dcl_ingest_id")
-                             or push.get("dcl_run_id"))
-            if dcl_ingest_id:
-                context["dcl_ingest_id"] = dcl_ingest_id
-                context.setdefault("dcl_ingest_ids", []).append(dcl_ingest_id)
+        dcl_ingest_id = (data.get("dcl_ingest_id")
+                         or push.get("dcl_ingest_id")
+                         or push.get("dcl_run_id"))
+        if dcl_ingest_id:
+            context["dcl_ingest_id"] = dcl_ingest_id
+            context.setdefault("dcl_ingest_ids", []).append(dcl_ingest_id)
+
         source_farm = (data.get("source_farm_manifest_id")
                        or push.get("source_farm_manifest_id"))
         if source_farm:
             context["source_farm_manifest_id"] = source_farm
 
-        # Store expansion metrics in context — per-entity suffix for ME
-        suffix = "_a" if config_key == "farm_config_a" else (
-            "_b" if config_key == "farm_config_b" else "")
-        context[f"source_rows{suffix}"] = source_rows
-        context[f"triples_written{suffix}"] = triples_written
+        context["source_rows"] = source_rows
+        context["triples_written"] = triples_written
         if source_rows and source_rows > 0:
-            context[f"expansion_factor{suffix}"] = round(
-                triples_written / source_rows, 1)
+            context["expansion_factor"] = round(triples_written / source_rows, 1)
 
         if accepted is not None and accepted != rows:
             triples_label = f"{accepted} accepted"
@@ -694,189 +592,6 @@ async def _step_farm_financials(
                    f"Farm financials failed ({resp.status_code}): "
                    f"{_extract_error(resp)}",
                    start_time=t0)
-
-
-async def _step_convergence_overlay(
-    client: httpx.AsyncClient,
-    step: PipelineStep,
-    job: PipelineJob,
-    context: dict[str, Any],
-    t0: float,
-) -> None:
-    """ME Step 3: Generate multi-entity overlay triples (customer profiles,
-    entity overlaps) via Farm and push to Convergence.
-
-    Runs after the per-entity farm_financials_a/b ingest group completes.
-    Farm's manifest-intake path does not invoke CustomerProfileTripleGenerator
-    or OverlapTripleGenerator — only generate-multi-entity-triples does.
-    Without this stage, cross_sell/qoe/entity_resolution engines see empty
-    customer.* props and produce degenerate scores.
-
-    Fail-loud gates (no silent skip):
-      1. Farm generate non-200 or missing farm_manifest_id
-      2. Farm per-entity domain summary shows zero customer triples
-      3. Farm push-to-dcl non-200, success=false, or missing convergence_ingest_id
-      4. Zero triples pushed
-    """
-    farm_url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL,
-                            "Convergence Overlay")
-
-    tenant_id = context.get("tenant_id")
-    if not tenant_id:
-        _mark_step(step, StepStatus.FAILED,
-                   "No tenant_id in pipeline context — ME pre-flight must "
-                   "resolve tenant_id from Convergence before overlay can run.",
-                   start_time=t0)
-        return
-
-    cfg = job.config
-    acq_entity = (cfg.get("farm_config_a") or {}).get("entity_id")
-    tgt_entity = (cfg.get("farm_config_b") or {}).get("entity_id")
-    if not acq_entity or not tgt_entity:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Missing entity_id on farm_config_a/b — "
-                   f"acquirer={acq_entity!r}, target={tgt_entity!r}. "
-                   f"ME pre-flight must populate both per-entity configs.",
-                   start_time=t0)
-        return
-
-    seed = cfg.get("seed", 42)
-    entities_csv = f"{acq_entity},{tgt_entity}"
-
-    # Step 1: generate overlay triples (skip_push=true — we push explicitly
-    # so this stage owns routing + response capture).
-    try:
-        gen_resp = await client.post(
-            f"{farm_url}/api/business-data/generate-multi-entity-triples",
-            headers=_json_headers(),
-            params={
-                "entities": entities_csv,
-                "seed": str(seed),
-                "tenant_id": tenant_id,
-                "skip_push": "true",
-            },
-        )
-    except httpx.ConnectError:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Could not reach Farm at "
-                   f"{farm_url}/api/business-data/generate-multi-entity-triples "
-                   f"— connection refused.",
-                   start_time=t0)
-        return
-    except httpx.TimeoutException as e:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Farm overlay generation timed out at "
-                   f"{farm_url}/api/business-data/generate-multi-entity-triples "
-                   f"— {e}",
-                   start_time=t0)
-        return
-
-    if gen_resp.status_code != 200:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Farm overlay generate failed ({gen_resp.status_code}): "
-                   f"{_extract_error(gen_resp)}",
-                   start_time=t0)
-        return
-
-    gen_data = gen_resp.json()
-    farm_manifest_id = gen_data.get("farm_manifest_id")
-    if not farm_manifest_id:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Farm overlay generate returned no farm_manifest_id: "
-                   f"{gen_data}",
-                   start_time=t0)
-        return
-
-    # Verify Farm generated customer profile triples for BOTH entities.
-    # Farm's CustomerProfileGenerator silently skips unknown entity_ids
-    # (logs a warning + continues) — we catch that here by requiring
-    # customer domain > 0 in per-entity summary.
-    domain_by_entity = gen_data.get("domain_summary_by_entity") or {}
-    missing_customers: list[str] = []
-    for _eid in (acq_entity, tgt_entity):
-        _counts = domain_by_entity.get(_eid) or {}
-        if _counts.get("customer", 0) == 0:
-            missing_customers.append(_eid)
-    if missing_customers:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Farm generated zero customer.* triples for "
-                   f"entity_id={missing_customers!r}. "
-                   f"CustomerProfileGenerator has no profile data for this "
-                   f"entity — upstream Farm regression. "
-                   f"domain_summary_by_entity={domain_by_entity}",
-                   start_time=t0)
-        return
-
-    # Step 2: push to Convergence (Farm routes by manifest.mode=multi_entity
-    # to CONVERGENCE_INGEST_URL). Blocks until push completes.
-    push_url = (f"{farm_url}/api/business-data/triple-runs/"
-                f"{farm_manifest_id}/push-to-dcl")
-    try:
-        push_resp = await client.post(push_url, headers=_json_headers())
-    except httpx.ConnectError:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Could not reach Farm push-to-dcl at {push_url} — "
-                   f"connection refused.",
-                   start_time=t0)
-        return
-    except httpx.TimeoutException as e:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Farm overlay push timed out at {push_url} — {e}",
-                   start_time=t0)
-        return
-
-    if push_resp.status_code != 200:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Farm overlay push failed ({push_resp.status_code}): "
-                   f"{_extract_error(push_resp)}",
-                   start_time=t0)
-        return
-
-    push_data = push_resp.json()
-    if not push_data.get("success"):
-        _mark_step(step, StepStatus.FAILED,
-                   f"Farm overlay push returned success=false: {push_data}",
-                   start_time=t0)
-        return
-
-    convergence_overlay_id = push_data.get("convergence_ingest_id")
-    if not convergence_overlay_id:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Farm push-to-dcl did not return convergence_ingest_id — "
-                   f"cannot track overlay identity. Response: {push_data}",
-                   start_time=t0)
-        return
-
-    pushed = push_data.get("pushed", 0)
-    if pushed == 0:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Farm overlay push reported zero triples pushed. "
-                   f"Response: {push_data}",
-                   start_time=t0)
-        return
-
-    context["convergence_overlay_id"] = convergence_overlay_id
-    context["overlay_farm_manifest_id"] = farm_manifest_id
-    context.setdefault("convergence_ingest_ids", []).append(
-        convergence_overlay_id)
-
-    customer_total = sum(
-        (domain_by_entity.get(_eid) or {}).get("customer", 0)
-        for _eid in (acq_entity, tgt_entity)
-    )
-    _mark_step(step, StepStatus.SUCCESS,
-               f"Overlay pushed: {pushed} triples "
-               f"({customer_total} customer profiles) — "
-               f"convergence_overlay_id={convergence_overlay_id}",
-               data={
-                   "convergence_overlay_id": convergence_overlay_id,
-                   "overlay_farm_manifest_id": farm_manifest_id,
-                   "triples_pushed": pushed,
-                   "customer_triples": customer_total,
-                   "tenant_id": tenant_id,
-                   "entity_ids": [acq_entity, tgt_entity],
-               },
-               start_time=t0)
 
 
 async def _step_dcl_ingest_verify(
@@ -924,157 +639,6 @@ async def _step_dcl_ingest_verify(
                    f"DCL triple check failed ({resp.status_code}): "
                    f"{_extract_error(resp)}",
                    start_time=t0)
-
-
-async def _step_cofa_unification(
-    client: httpx.AsyncClient,
-    step: PipelineStep,
-    job: PipelineJob,
-    context: dict[str, Any],
-    t0: float,
-) -> None:
-    """COFA unification via Convergence HTTP endpoint.
-
-    Convergence owns all ME engines including COFA.
-    Sends convergence_ingest_ids array + engagement identity.
-    """
-    convergence_url = _require_url(
-        "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL,
-        "COFA Unification")
-
-    # Engagement identity from ME pre-flight (set in run_pipeline_batch)
-    engagement_id = context.get("convergence_engagement_id")
-    if not engagement_id:
-        _mark_step(step, StepStatus.FAILED,
-                   "No convergence_engagement_id in pipeline context — "
-                   "ME pre-flight must resolve engagement from Convergence "
-                   "before COFA can run.",
-                   start_time=t0)
-        return
-
-    # Collect convergence_ingest_ids from completed Farm steps
-    convergence_ingest_ids = context.get("convergence_ingest_ids", [])
-    if not convergence_ingest_ids:
-        _mark_step(step, StepStatus.FAILED,
-                   "No convergence_ingest_ids in pipeline context — "
-                   "Farm + Convergence ingest steps must succeed before COFA.",
-                   start_time=t0)
-        return
-
-    pipeline_run_id = context.get("pipeline_run_id", job.pipeline_run_id)
-    tenant_id = context.get("tenant_id")
-
-    cofa_url = f"{convergence_url}/api/convergence/cofa/unify"
-    body: dict[str, Any] = {
-        "engagement_id": engagement_id,
-        "dcl_ingest_ids": convergence_ingest_ids,
-        "pipeline_run_id": pipeline_run_id,
-    }
-    if tenant_id:
-        body["tenant_id"] = tenant_id
-
-    try:
-        resp = await client.post(cofa_url, json=body, headers=_json_headers())
-    except httpx.ConnectError:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Could not reach Convergence COFA at {cofa_url} — "
-                   f"connection refused. Verify Convergence is running on "
-                   f"port 8010.",
-                   start_time=t0)
-        return
-    except httpx.TimeoutException as e:
-        _mark_step(step, StepStatus.FAILED,
-                   f"COFA request timed out at {cofa_url} — {e}",
-                   start_time=t0)
-        return
-
-    if resp.status_code != 200:
-        _mark_step(step, StepStatus.FAILED,
-                   f"COFA unification failed ({resp.status_code}): "
-                   f"{_extract_error(resp)}",
-                   start_time=t0)
-        return
-
-    data = resp.json() if resp.headers.get(
-        "content-type", "").startswith("application/json") else {}
-
-    cofa_run_id = data.get("cofa_run_id")
-    if cofa_run_id:
-        context["cofa_run_id"] = cofa_run_id
-    consumed = data.get("consumed_dcl_ingest_ids")
-    if consumed:
-        context["consumed_dcl_ingest_ids"] = consumed
-
-    _mark_step(step, StepStatus.SUCCESS,
-               f"COFA complete — cofa_run_id={cofa_run_id}, "
-               f"consumed {len(convergence_ingest_ids)} ingest(s)",
-               data=data, start_time=t0)
-
-
-async def _step_verify(
-    client: httpx.AsyncClient,
-    step: PipelineStep,
-    job: PipelineJob,
-    context: dict[str, Any],
-    t0: float,
-) -> None:
-    """Verify COFA output via Convergence.
-
-    Runs AFTER COFA completes — explicit DAG dependency.
-    Sends cofa_run_id, captures verify_id.
-    """
-    convergence_url = _require_url(
-        "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL, "Verify")
-
-    cofa_run_id = context.get("cofa_run_id")
-    if not cofa_run_id:
-        _mark_step(step, StepStatus.FAILED,
-                   "No cofa_run_id in pipeline context — "
-                   "COFA Unification must succeed before Verify.",
-                   start_time=t0)
-        return
-
-    verify_url = f"{convergence_url}/api/convergence/verify"
-    body: dict[str, Any] = {"cofa_run_id": cofa_run_id}
-    tenant_id = context.get("tenant_id")
-    if tenant_id:
-        body["tenant_id"] = tenant_id
-    pipeline_run_id = context.get("pipeline_run_id", job.pipeline_run_id)
-    body["pipeline_run_id"] = pipeline_run_id
-
-    try:
-        resp = await client.post(verify_url, json=body,
-                                 headers=_json_headers())
-    except httpx.ConnectError:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Could not reach Convergence Verify at {verify_url} — "
-                   f"connection refused. Verify Convergence is running on "
-                   f"port 8010.",
-                   start_time=t0)
-        return
-    except httpx.TimeoutException as e:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Verify request timed out at {verify_url} — {e}",
-                   start_time=t0)
-        return
-
-    if resp.status_code != 200:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Verify failed ({resp.status_code}): "
-                   f"{_extract_error(resp)}",
-                   start_time=t0)
-        return
-
-    data = resp.json() if resp.headers.get(
-        "content-type", "").startswith("application/json") else {}
-
-    verify_id = data.get("verify_id")
-    if verify_id:
-        context["verify_id"] = verify_id
-
-    _mark_step(step, StepStatus.SUCCESS,
-               f"Verify complete — verify_id={verify_id}",
-               data=data, start_time=t0)
 
 
 async def _step_nlq_data_visible(
@@ -1277,258 +841,6 @@ async def _step_nlq_data_visible(
                data=details, start_time=t0)
 
 
-async def _step_convergence_surfaces_visible(
-    client: httpx.AsyncClient,
-    step: PipelineStep,
-    job: PipelineJob,
-    context: dict[str, Any],
-    t0: float,
-) -> None:
-    """Post-ME check: confirm Merge, Engagements, and Reports surfaces are
-    healthy for the freshly ingested engagement. Plain-English failure
-    messages carry the surface name, endpoint, and full provenance.
-    """
-    convergence_url = _require_url(
-        "CONVERGENCE_BASE_URL", config.CONVERGENCE_BASE_URL,
-        "Verify Merge, Engagements, Reports")
-
-    tenant_id = context.get("tenant_id")
-    engagement_id = context.get("convergence_engagement_id")
-    run_name = job.run_name
-    pipeline_run_id = context.get("pipeline_run_id", job.pipeline_run_id)
-
-    cfg = job.config
-    acq_entity = (cfg.get("farm_config_a") or {}).get("entity_id")
-    tgt_entity = (cfg.get("farm_config_b") or {}).get("entity_id")
-
-    if not tenant_id or not engagement_id:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Cannot verify Convergence surfaces — identity missing "
-                   f"(tenant_id={tenant_id!r}, "
-                   f"engagement_id={engagement_id!r}, "
-                   f"run_name={run_name!r}). ME pre-flight must populate "
-                   f"both before verification.",
-                   start_time=t0)
-        return
-
-    if not acq_entity or not tgt_entity:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Cannot verify Convergence surfaces — entity pair "
-                   f"missing (acquirer={acq_entity!r}, "
-                   f"target={tgt_entity!r}). ME pre-flight must populate "
-                   f"farm_config_a/b.entity_id before verification.",
-                   start_time=t0)
-        return
-
-    details: dict[str, Any] = {
-        "tenant_id": tenant_id,
-        "engagement_id": engagement_id,
-        "run_name": run_name,
-        "pipeline_run_id": pipeline_run_id,
-        "acquirer_entity_id": acq_entity,
-        "target_entity_id": tgt_entity,
-        "convergence_base_url": convergence_url,
-        "checks": [],
-    }
-
-    def _fail(surface: str, endpoint: str, reason: str) -> None:
-        details["checks"].append({
-            "surface": surface,
-            "endpoint": endpoint,
-            "status": "failed",
-            "reason": reason,
-        })
-        _mark_step(step, StepStatus.FAILED,
-                   f"{surface} would fail for users — {reason}. "
-                   f"endpoint={endpoint}. run={run_name}, "
-                   f"engagement={engagement_id}",
-                   data=details, start_time=t0)
-
-    # 1. Merge overview — must return ≥2 entities with financial summary
-    merge_endpoint = f"{convergence_url}/api/convergence/merge/overview"
-    try:
-        merge = await convergence_client.get_merge_overview(
-            acquirer_id=acq_entity, target_id=tgt_entity)
-    except httpx.ConnectError:
-        _fail("Merge", merge_endpoint, "connection refused")
-        return
-    except httpx.TimeoutException as e:
-        _fail("Merge", merge_endpoint, f"request timed out — {e}")
-        return
-    except httpx.HTTPStatusError as e:
-        _fail("Merge", merge_endpoint,
-              f"HTTP {e.response.status_code}: "
-              f"{_extract_error(e.response)}")
-        return
-
-    overview = merge.get("overview") or {}
-    entities = overview.get("entities") or []
-    financial_summary = merge.get("financial_summary") or []
-    if len(entities) < 2:
-        _fail("Merge", merge_endpoint,
-              f"expected ≥2 entities in overview, got {len(entities)} "
-              f"({[e.get('entity_id') for e in entities]}) — "
-              f"page would show 'need at least 2 entities' error")
-        return
-    if not financial_summary:
-        _fail("Merge", merge_endpoint,
-              "financial_summary is empty — Merge page would render with "
-              "no revenue/EBITDA figures")
-        return
-    details["checks"].append({
-        "surface": "Merge",
-        "endpoint": merge_endpoint,
-        "entities": [e.get("entity_id") for e in entities],
-        "financial_summary_rows": len(financial_summary),
-    })
-
-    # 2. Active engagement — Engagements page primary call
-    active_endpoint = (f"{convergence_url}/api/convergence/engagements/active"
-                       f"?tenant_id={tenant_id}")
-    try:
-        active = await convergence_client.get_active_engagement(tenant_id)
-    except httpx.ConnectError:
-        _fail("Engagements", active_endpoint, "connection refused")
-        return
-    except httpx.TimeoutException as e:
-        _fail("Engagements", active_endpoint, f"request timed out — {e}")
-        return
-    except httpx.HTTPStatusError as e:
-        _fail("Engagements", active_endpoint,
-              f"HTTP {e.response.status_code}: "
-              f"{_extract_error(e.response)}")
-        return
-
-    if not active:
-        _fail("Engagements", active_endpoint,
-              f"no active engagement for tenant — page would show empty "
-              f"state even though run just completed for "
-              f"engagement_id={engagement_id}")
-        return
-    active_eid = str(active.get("engagement_id") or "")
-    if active_eid != engagement_id:
-        _fail("Engagements", active_endpoint,
-              f"active engagement is {active_eid!r}, expected "
-              f"{engagement_id!r} — Engagements page would show the wrong "
-              f"engagement as active")
-        return
-    details["checks"].append({
-        "surface": "Engagements/active",
-        "endpoint": active_endpoint,
-        "active_engagement_id": active_eid,
-    })
-
-    # 3. Engagement history — past runs list
-    history_endpoint = (f"{convergence_url}/api/convergence/engagements/"
-                        f"{engagement_id}/runs")
-    try:
-        history = await convergence_client.get_engagement_history(
-            engagement_id)
-    except httpx.ConnectError:
-        _fail("Engagements", history_endpoint, "connection refused")
-        return
-    except httpx.TimeoutException as e:
-        _fail("Engagements", history_endpoint, f"request timed out — {e}")
-        return
-    except httpx.HTTPStatusError as e:
-        _fail("Engagements", history_endpoint,
-              f"HTTP {e.response.status_code}: "
-              f"{_extract_error(e.response)}")
-        return
-
-    if not history:
-        _fail("Engagements", history_endpoint,
-              f"no past runs returned for engagement_id={engagement_id} — "
-              f"Engagements page 'past runs' section would be empty even "
-              f"though this run just completed")
-        return
-    details["checks"].append({
-        "surface": "Engagements/runs",
-        "endpoint": history_endpoint,
-        "past_runs": len(history),
-    })
-
-    # 4. Reports P&L Combined tab.
-    # is_active=true fallback — ME ingests span multiple convergence_ingest_ids
-    # (one per entity), so no single run_id covers the combined payload.
-    # Convergence's v2_helpers.py documents this: passing pipeline_run_id=None
-    # switches the resolver from run_id scoping to is_active=true filtering,
-    # which is exactly what Reports surfaces use by default.
-    pnl_endpoint = (f"{convergence_url}/api/convergence/reports/v2/"
-                    f"combining/income-statement")
-    try:
-        pnl = await convergence_client.get_pnl_income_statement(
-            tenant_id=tenant_id)
-    except httpx.ConnectError:
-        _fail("Reports P&L Combined", pnl_endpoint, "connection refused")
-        return
-    except httpx.TimeoutException as e:
-        _fail("Reports P&L Combined", pnl_endpoint,
-              f"request timed out — {e}")
-        return
-    except httpx.HTTPStatusError as e:
-        _fail("Reports P&L Combined", pnl_endpoint,
-              f"HTTP {e.response.status_code}: "
-              f"{_extract_error(e.response)}")
-        return
-
-    combined_pnl = pnl.get("combined")
-    if not isinstance(combined_pnl, dict) or not combined_pnl:
-        _fail("Reports P&L Combined", pnl_endpoint,
-              f"'combined' payload missing or empty — P&L Combined tab "
-              f"would render empty. keys={sorted(pnl.keys())[:10]}")
-        return
-    details["checks"].append({
-        "surface": "Reports P&L Combined",
-        "endpoint": pnl_endpoint,
-        "combined_concepts": sorted(combined_pnl.keys())[:10],
-    })
-
-    # 5. Reports QofE tab — same is_active=true fallback rationale as P&L above.
-    qoe_endpoint = (f"{convergence_url}/api/convergence/reports/v2/"
-                    f"qoe/combined")
-    try:
-        qoe = await convergence_client.get_qoe_combined(
-            tenant_id=tenant_id)
-    except httpx.ConnectError:
-        _fail("Reports QofE", qoe_endpoint, "connection refused")
-        return
-    except httpx.TimeoutException as e:
-        _fail("Reports QofE", qoe_endpoint, f"request timed out — {e}")
-        return
-    except httpx.HTTPStatusError as e:
-        _fail("Reports QofE", qoe_endpoint,
-              f"HTTP {e.response.status_code}: "
-              f"{_extract_error(e.response)}")
-        return
-
-    # QofE response shape: combined dict (per-entity QoE payload) + bridge
-    # dict (adjustments). Either being populated is enough to render the tab.
-    combined_qoe = qoe.get("combined")
-    bridge_qoe = qoe.get("bridge")
-    has_combined = isinstance(combined_qoe, dict) and bool(combined_qoe)
-    has_bridge = isinstance(bridge_qoe, dict) and bool(bridge_qoe)
-    if not has_combined and not has_bridge:
-        _fail("Reports QofE", qoe_endpoint,
-              f"neither 'combined' nor 'bridge' payload is populated — "
-              f"QofE tab would render empty. keys={sorted(qoe.keys())}")
-        return
-    details["checks"].append({
-        "surface": "Reports QofE",
-        "endpoint": qoe_endpoint,
-        "combined_keys": sorted(combined_qoe.keys())[:10] if has_combined else [],
-        "bridge_keys": sorted(bridge_qoe.keys())[:10] if has_bridge else [],
-    })
-
-    _mark_step(step, StepStatus.SUCCESS,
-               f"Convergence surfaces verified — Merge ({len(entities)} "
-               f"entities), Engagements ({len(history)} past runs), "
-               f"P&L Combined ({len(combined_pnl)} concepts), QofE "
-               f"(combined={has_combined}, bridge={has_bridge}). "
-               f"run={run_name}",
-               data=details, start_time=t0)
-
-
 def _step_complete(
     step: PipelineStep,
     job: PipelineJob,
@@ -1554,42 +866,19 @@ def _step_complete(
         "steps_skipped": skipped,
         "steps_total": total,
         "total_elapsed_ms": elapsed_ms,
-        "pipeline_mode": job.pipeline_mode.value,
         "run_name": job.run_name,
         "entity_id": context.get("entity_id"),
     }
 
-    # ME: aggregate per-entity expansion metrics
-    if job.pipeline_mode == PipelineMode.ME:
-        source_rows = (
-            (context.get("source_rows_a") or 0)
-            + (context.get("source_rows_b") or 0))
-        triples_written = (
-            (context.get("triples_written_a") or 0)
-            + (context.get("triples_written_b") or 0))
-        if source_rows:
-            summary["source_rows"] = source_rows
-        if triples_written:
-            summary["triples_written"] = triples_written
-        if source_rows and source_rows > 0 and triples_written:
-            summary["expansion_factor"] = round(
-                triples_written / source_rows, 1)
-        # ME identity
-        summary["engagement_short_name"] = context.get(
-            "engagement_short_name")
-        summary["convergence_engagement_id"] = context.get(
-            "convergence_engagement_id")
-    else:
-        # SE: single-entity metrics
-        source_rows = context.get("source_rows")
-        triples_written = context.get("triples_written")
-        expansion_factor = context.get("expansion_factor")
-        if source_rows is not None:
-            summary["source_rows"] = source_rows
-        if triples_written is not None:
-            summary["triples_written"] = triples_written
-        if expansion_factor is not None:
-            summary["expansion_factor"] = expansion_factor
+    source_rows = context.get("source_rows")
+    triples_written = context.get("triples_written")
+    expansion_factor = context.get("expansion_factor")
+    if source_rows is not None:
+        summary["source_rows"] = source_rows
+    if triples_written is not None:
+        summary["triples_written"] = triples_written
+    if expansion_factor is not None:
+        summary["expansion_factor"] = expansion_factor
 
     if failed > 0:
         _mark_step(step, StepStatus.SUCCESS,
@@ -1606,138 +895,15 @@ def _step_complete(
 # ── Run Name Management ─────────────────────────────────────────────
 
 def _update_run_name(job: PipelineJob, context: dict[str, Any]) -> None:
-    """Update job.run_name when identity becomes available.
+    """Update job.run_name when entity_id becomes available from Farm.
 
-    SE: entity_id from Farm.
-    ME: engagement_short_name from Convergence pre-flight.
     Also sets provenance_tag on all steps to run_name for UI display.
     """
     entity_id = context.get("entity_id")
-    engagement_short_name = context.get("engagement_short_name")
-    new_name = make_run_name(
-        entity_id, job.pipeline_run_id,
-        engagement_short_name=engagement_short_name)
+    new_name = make_run_name(entity_id, job.pipeline_run_id)
     job.run_name = new_name
     for s in job.steps:
         s.provenance_tag = new_name
-
-
-# ── ME Pre-flight ───────────────────────────────────────────────────
-
-async def _me_preflight(
-    client: httpx.AsyncClient,
-    job: PipelineJob,
-    context: dict[str, Any],
-    cfg: dict[str, Any],
-) -> None:
-    """Fetch engagement from Convergence, populate context + per-entity configs.
-
-    Raises RuntimeError on failure (caller catches and aborts pipeline).
-    Sets: convergence_engagement_id, engagement_short_name, tenant_id,
-          farm_config_a.entity_id, farm_config_b.entity_id, run_name.
-    """
-    convergence_url = config.CONVERGENCE_BASE_URL
-    if not convergence_url:
-        raise RuntimeError(
-            "ME pre-flight — CONVERGENCE_BASE_URL not configured")
-
-    convergence_url = convergence_url.rstrip("/")
-
-    # Engagement ID — Convergence is the canonical owner
-    engagement_id = (cfg.get("convergence_engagement_id")
-                     or cfg.get("engagement_id"))
-    if not engagement_id:
-        raise RuntimeError(
-            "ME pre-flight — no engagement_id in pipeline config")
-
-    url = (f"{convergence_url}/api/convergence/engagements/"
-           f"{engagement_id}")
-    try:
-        resp = await client.get(url, headers=_json_headers())
-    except httpx.ConnectError:
-        raise RuntimeError(
-            f"ME pre-flight — Could not reach Convergence "
-            f"at {url} — connection refused")
-    except httpx.TimeoutException:
-        raise RuntimeError(
-            f"ME pre-flight — Convergence timed out at {url}")
-
-    if resp.status_code == 404:
-        raise RuntimeError(
-            f"ME pre-flight — engagement {engagement_id} not found in Convergence")
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"ME pre-flight — Convergence returned "
-            f"{resp.status_code}: {_extract_error(resp)}")
-
-    eng = resp.json()
-
-    lifecycle_stage = eng.get("lifecycle_stage")
-    if lifecycle_stage != "active":
-        raise RuntimeError(
-            f"ME pre-flight — engagement {engagement_id} is not runnable: "
-            f"lifecycle_stage={lifecycle_stage!r} (must be 'active'). "
-            f"Only active engagements can run the ME pipeline.")
-
-    # Promote the dispatched engagement so it wins the
-    # `get_active_engagement(tenant)` ORDER BY updated_at DESC tie-break
-    # against any other coexisting active engagements for this tenant. The
-    # downstream verify_merge step asserts that /engagements/active returns
-    # what we dispatched — without this, two coexisting active engagements
-    # race by stale updated_at and one of them silently fails verify.
-    promote_url = (f"{convergence_url}/api/convergence/engagements/"
-                   f"{engagement_id}/promote")
-    try:
-        promote_resp = await client.post(promote_url, headers=_json_headers())
-    except httpx.ConnectError:
-        raise RuntimeError(
-            f"ME pre-flight — Could not reach Convergence to promote "
-            f"engagement at {promote_url} — connection refused")
-    except httpx.TimeoutException:
-        raise RuntimeError(
-            f"ME pre-flight — Convergence promote timed out at {promote_url}")
-    if promote_resp.status_code != 200:
-        raise RuntimeError(
-            f"ME pre-flight — Convergence returned {promote_resp.status_code} "
-            f"promoting engagement {engagement_id}: "
-            f"{_extract_error(promote_resp)}")
-
-    # Populate context from Convergence engagement
-    context["convergence_engagement_id"] = str(eng["engagement_id"])
-    short_name = eng.get("short_name") or eng.get("engagement_short_name", "")
-    context["engagement_short_name"] = short_name
-
-    acq_entity = eng.get("acquirer_entity_id", "")
-    tgt_entity = eng.get("target_entity_id", "")
-
-    # tenant_id: Convergence engagement > env
-    tenant_id = eng.get("tenant_id")
-    if not tenant_id:
-        tenant_id = config.AOS_TENANT_ID
-    context["tenant_id"] = tenant_id
-
-    # Set per-entity Farm configs so farm_financials_a/b get correct entity_id
-    job.config["farm_config_a"] = {
-        **cfg.get("farm_config_a", {}),
-        "entity_id": acq_entity,
-    }
-    job.config["farm_config_b"] = {
-        **cfg.get("farm_config_b", {}),
-        "entity_id": tgt_entity,
-    }
-
-    # Persist Convergence identity in job.config for step-mode context rebuild
-    job.config["convergence_engagement_id"] = context[
-        "convergence_engagement_id"]
-    job.config["engagement_short_name"] = short_name
-
-    # Set run_name from engagement_short_name
-    _update_run_name(job, context)
-
-    logger.info(
-        f"[PIPELINE] ME pre-flight OK — engagement={eng['engagement_id']}, "
-        f"short_name={short_name}, acquirer={acq_entity}, "
-        f"target={tgt_entity}")
 
 
 # ── Pipeline Execution Engine ────────────────────────────────────────
@@ -1758,30 +924,8 @@ async def run_pipeline_batch(pipeline_run_id: str) -> None:
     async with httpx.AsyncClient(timeout=240.0) as client:
         context: dict[str, Any] = {
             "pipeline_run_id": pipeline_run_id,
+            "tenant_id": config.AOS_TENANT_ID,
         }
-
-        # Resolve tenant identity — SE and ME have different models.
-        cfg = job.config
-
-        if job.pipeline_mode == PipelineMode.SE:
-            # SE: canonical tenant_id from env.  entity_id is generated by
-            # Farm during the snapshot step — NOT from SEED_ACQUIRER_ENTITY
-            # (that's an ME entity).  entity_id will be set by
-            # _step_farm_snapshot when Farm responds.
-            context["tenant_id"] = config.AOS_TENANT_ID
-        else:
-            # ── ME pre-flight ──────────────────────────────────────
-            # Fetch engagement from Convergence API to get canonical
-            # engagement_id, engagement_short_name, and entity pair.
-            try:
-                await _me_preflight(client, job, context, cfg)
-            except RuntimeError as e:
-                logger.error(f"[PIPELINE] {e}")
-                job.status = "completed_with_errors"
-                job.message = str(e)
-                job.completed_at = _now()
-                await _persist_job(job)
-                return
 
         i = 0
         while i < len(job.steps):
@@ -1862,17 +1006,8 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
         if cfg.get(key):
             context[key] = cfg[key]
 
-    # SE default: canonical tenant from env.  entity_id comes from Farm
-    # snapshot step (recovered from step data below), not SEED_ACQUIRER_ENTITY.
-    if job.pipeline_mode == PipelineMode.SE:
-        if not context.get("tenant_id"):
-            context["tenant_id"] = config.AOS_TENANT_ID
-
-    # ME identity from config (set by pre-flight, persisted in job.config)
-    if cfg.get("convergence_engagement_id"):
-        context["convergence_engagement_id"] = cfg["convergence_engagement_id"]
-    if cfg.get("engagement_short_name"):
-        context["engagement_short_name"] = cfg["engagement_short_name"]
+    if not context.get("tenant_id"):
+        context["tenant_id"] = config.AOS_TENANT_ID
 
     for s in job.steps:
         if s.data and s.status == StepStatus.SUCCESS:
@@ -1882,7 +1017,7 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
             elif "snapshot_id" in s.data:
                 context["farm_manifest_id"] = s.data["snapshot_id"]
             if s.name == "farm_snapshot":
-                if job.pipeline_mode == PipelineMode.SE and "entity_id" in s.data:
+                if "entity_id" in s.data:
                     context["entity_id"] = s.data["entity_id"]
             else:
                 if "tenant_id" in s.data:
@@ -1895,43 +1030,14 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
                 context["handoff_id"] = s.data["handoff_id"]
             if "aam_inference_id" in s.data:
                 context["aam_inference_id"] = s.data["aam_inference_id"]
-            # Extract ingest ID — ME uses convergence_ingest_id, SE uses dcl_ingest_id
-            if s.name in ("farm_financials_a", "farm_financials_b"):
+            _dcl_id = s.data.get("dcl_ingest_id")
+            if not _dcl_id:
                 _push = s.data.get("push_result") or {}
-                _cid = (s.data.get("convergence_ingest_id")
-                        or _push.get("convergence_ingest_id")
-                        or _push.get("dcl_run_id")
-                        or s.data.get("dcl_ingest_id"))
-                if _cid:
-                    context.setdefault("convergence_ingest_ids", []).append(_cid)
-                if s.name == "farm_financials_a" and _cid:
-                    context["convergence_ingest_id_a"] = _cid
-                if s.name == "farm_financials_b" and _cid:
-                    context["convergence_ingest_id_b"] = _cid
-            else:
-                _dcl_id = s.data.get("dcl_ingest_id")
-                if not _dcl_id:
-                    _push = s.data.get("push_result") or {}
-                    _dcl_id = (_push.get("dcl_ingest_id")
-                               or _push.get("dcl_run_id"))
-                if _dcl_id:
-                    context.setdefault("dcl_ingest_ids", []).append(_dcl_id)
-                    context["dcl_ingest_id"] = _dcl_id
-            # Convergence multi-entity overlay
-            if s.name == "convergence_overlay":
-                _ov_id = s.data.get("convergence_overlay_id")
-                if _ov_id:
-                    context["convergence_overlay_id"] = _ov_id
-                    context.setdefault(
-                        "convergence_ingest_ids", []).append(_ov_id)
-                _ov_fm = s.data.get("overlay_farm_manifest_id")
-                if _ov_fm:
-                    context["overlay_farm_manifest_id"] = _ov_fm
-            # COFA output
-            if "cofa_run_id" in s.data:
-                context["cofa_run_id"] = s.data["cofa_run_id"]
-            if "verify_id" in s.data:
-                context["verify_id"] = s.data["verify_id"]
+                _dcl_id = (_push.get("dcl_ingest_id")
+                           or _push.get("dcl_run_id"))
+            if _dcl_id:
+                context.setdefault("dcl_ingest_ids", []).append(_dcl_id)
+                context["dcl_ingest_id"] = _dcl_id
     return context
 
 

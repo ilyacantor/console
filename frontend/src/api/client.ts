@@ -54,7 +54,6 @@ export interface PipelineStepData {
 export interface PipelineJobData {
   pipeline_run_id: string
   run_name: string
-  pipeline_mode: 'se' | 'me'
   execution_mode: 'batch' | 'step'
   status: string
   started_at: string
@@ -76,13 +75,12 @@ interface StartPipelineResponse {
 }
 
 export function startPipeline(
-  mode: 'se' | 'me',
   execution: 'batch' | 'step',
   config?: Record<string, unknown>,
 ): Promise<StartPipelineResponse> {
   return fetchJSON('/api/pipeline/start', {
     method: 'POST',
-    body: JSON.stringify({ mode, execution, config }),
+    body: JSON.stringify({ execution, config }),
   })
 }
 
@@ -168,82 +166,6 @@ export function updateBaselines(baselines: Baselines): Promise<{ status: string 
   return fetchJSON('/api/pipeline/config/baselines', {
     method: 'PUT',
     body: JSON.stringify(baselines),
-  })
-}
-
-// Engagements
-export interface Engagement {
-  engagement_id: string
-  acquirer_entity_id: string
-  target_entity_id: string
-  tenant_id: string | null
-  engagement_type: string
-  lifecycle_stage: string
-  state_json: Record<string, unknown>
-  created_at: string | null
-  updated_at: string | null
-  convergence_engagement_id: string | null
-  engagement_short_name: string | null
-}
-
-// Convergence engagements — canonical source for ME pipeline
-export interface ConvergenceEngagement {
-  engagement_id: string
-  acquirer_entity_id: string
-  target_entity_id: string
-  engagement_short_name: string | null
-  tenant_id: string | null
-  lifecycle_stage: string
-  state: Record<string, unknown> | null
-  created_at: string | null
-}
-
-export async function fetchConvergenceEngagements(
-  lifecycleStage?: string,
-): Promise<ConvergenceEngagement[]> {
-  const qs = lifecycleStage ? `?lifecycle_stage=${encodeURIComponent(lifecycleStage)}` : ''
-  const data = await fetchJSON<{ engagements: ConvergenceEngagement[] }>(
-    `/api/engagements${qs}`,
-  )
-  return data.engagements
-}
-
-export function fetchEngagements(): Promise<{ engagements: Engagement[] }> {
-  return fetchJSON('/api/engagements')
-}
-
-export function fetchEngagement(id: string): Promise<Engagement> {
-  return fetchJSON(`/api/engagements/${id}`)
-}
-
-export function updateEngagement(
-  id: string,
-  data: { lifecycle_stage?: string; state_json?: Record<string, unknown> },
-): Promise<Engagement> {
-  return fetchJSON(`/api/engagements/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(data),
-  })
-}
-
-export interface EngagementHistoryEvent {
-  timestamp: string | null
-  source: string
-  description: string
-}
-
-export function fetchEngagementHistory(id: string, limit = 50): Promise<{ events: EngagementHistoryEvent[] }> {
-  return fetchJSON(`/api/engagements/${id}/history?limit=${limit}`)
-}
-
-export function createEngagement(data: {
-  acquirer_entity_id: string
-  target_entity_id: string
-  engagement_type: string
-}): Promise<Engagement> {
-  return fetchJSON('/api/engagements', {
-    method: 'POST',
-    body: JSON.stringify(data),
   })
 }
 
@@ -383,22 +305,6 @@ export function fetchInstrumentationRuns(params?: {
 export function fetchInstrumentationSummary(engagementId?: string): Promise<InstrumentationSummary> {
   const qs = engagementId ? `?engagement_id=${engagementId}` : ''
   return fetchJSON(`/api/instrumentation/summary${qs}`)
-}
-
-// Conflicts
-export interface Conflict {
-  id: string
-  engagement_id: string
-  name: string
-  impact_dollars: number
-  impact_label: string
-  severity: 'high' | 'medium' | 'low'
-  status: 'pending' | 'resolved'
-  treatment: string | null
-}
-
-export function fetchConflicts(engagementId: string): Promise<{ conflicts: Conflict[] }> {
-  return fetchJSON(`/api/engagements/${engagementId}/conflicts`)
 }
 
 // Narrative

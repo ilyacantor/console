@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { fetchOperatorFeedPlans, type MaiPlan, type MaiPlansResponse } from '../api/client'
-import { useEngagement } from '../context/EngagementContext'
+import { useIdentity } from '../api/identity'
 import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
 
 const REFRESH_INTERVAL_MS = 30_000
@@ -187,7 +187,7 @@ function PlanCard({ plan }: { plan: MaiPlan }) {
 }
 
 export default function OperatorFeed() {
-  const { activeEngagement } = useEngagement()
+  const { identity } = useIdentity()
   const [plans, setPlans] = useState<MaiPlan[]>([])
   const [total, setTotal] = useState(0)
   const [tierFilter, setTierFilter] = useState<TierFilter>('all')
@@ -197,7 +197,7 @@ export default function OperatorFeed() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const tenantId = activeEngagement?.tenant_id
+  const tenantId = identity?.tenant_id
 
   const fetchPlans = useCallback(async () => {
     if (!tenantId) return
@@ -323,14 +323,13 @@ export default function OperatorFeed() {
         </div>
       </div>
 
-      {/* No tenant warning */}
       {!tenantId && (
         <div data-testid="no-tenant" style={{
           padding: '24px', textAlign: 'center', color: 'var(--text-muted)',
           background: 'var(--bg-surface)', borderRadius: '8px',
           border: '0.5px solid var(--border)',
         }}>
-          No active engagement with a tenant ID. Select an engagement to view escalations.
+          Loading tenant identity...
         </div>
       )}
 

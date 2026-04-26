@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { loadIdentity, type Identity } from '../api/identity';
 
 export interface MaiToolUseEvent {
   tool_use_id: string;
@@ -33,7 +34,6 @@ export interface UseMaiStreamOptions {
   onComplete: (text: string) => void;
   session_id: string;
   surface_id?: string;
-  engagement_id?: string | null;
   page_context?: Record<string, unknown> | null;
   onToolUse?: (evt: MaiToolUseEvent) => void;
   onToolResult?: (evt: MaiToolResultEvent) => void;
@@ -48,36 +48,10 @@ export interface UseMaiStreamResult {
   abort: () => void;
 }
 
-interface Identity {
-  tenant_id: string;
-  operator_id: string;
-}
-
-let _identityPromise: Promise<Identity> | null = null;
-
-async function loadIdentity(): Promise<Identity> {
-  if (_identityPromise) return _identityPromise;
-  _identityPromise = fetch('/api/auth/identity')
-    .then(async (r) => {
-      if (!r.ok) {
-        const text = await r.text().catch(() => r.statusText);
-        throw new Error(
-          `Mai identity load failed — /api/auth/identity returned ${r.status}: ${text}`,
-        );
-      }
-      return r.json() as Promise<Identity>;
-    })
-    .catch((err) => {
-      _identityPromise = null;
-      throw err;
-    });
-  return _identityPromise;
-}
-
 export function useMaiStream(options: UseMaiStreamOptions): UseMaiStreamResult {
   const {
     onUserMessage, onComplete, session_id, surface_id = 'console',
-    engagement_id, page_context, onToolUse, onToolResult,
+    page_context, onToolUse, onToolResult,
   } = options;
 
   const [isStreaming, setIsStreaming] = useState(false);
@@ -134,7 +108,6 @@ export function useMaiStream(options: UseMaiStreamOptions): UseMaiStreamResult {
           surface_id,
           tenant_id: identity.tenant_id,
           operator_id: identity.operator_id,
-          engagement_id: engagement_id ?? null,
           page_context: page_context ?? null,
         };
 
@@ -253,7 +226,7 @@ export function useMaiStream(options: UseMaiStreamOptions): UseMaiStreamResult {
         setStreamBuffer('');
       }
     },
-    [isStreaming, identity, session_id, surface_id, engagement_id, page_context],
+    [isStreaming, identity, session_id, surface_id, page_context],
   );
 
   return { sendMessage, isStreaming, streamBuffer, isThinking, error, abort };

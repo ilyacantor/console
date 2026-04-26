@@ -14,11 +14,6 @@ class StepStatus(str, Enum):
     SKIPPED = "skipped"
 
 
-class PipelineMode(str, Enum):
-    SE = "se"
-    ME = "me"
-
-
 class ExecutionMode(str, Enum):
     BATCH = "batch"
     STEP = "step"
@@ -40,7 +35,6 @@ class PipelineStep(BaseModel):
 class PipelineJob(BaseModel):
     pipeline_run_id: str
     run_name: str = ""
-    pipeline_mode: PipelineMode
     execution_mode: ExecutionMode
     status: str = "pending"
     started_at: str
@@ -62,7 +56,6 @@ class ServiceHealth(BaseModel):
 
 
 class StartPipelineRequest(BaseModel):
-    mode: PipelineMode
     execution: ExecutionMode
     config: dict[str, Any] | None = None
 

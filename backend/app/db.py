@@ -174,7 +174,6 @@ async def _ensure_schema() -> None:
             CREATE TABLE IF NOT EXISTS console.pipeline_jobs (
                 pipeline_run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 run_name TEXT,
-                pipeline_mode VARCHAR(10) NOT NULL,
                 execution_mode VARCHAR(10) NOT NULL,
                 status VARCHAR(30) NOT NULL,
                 started_at TIMESTAMPTZ NOT NULL,
@@ -204,7 +203,6 @@ async def _ensure_schema() -> None:
             CREATE TABLE IF NOT EXISTS console.recon_history (
                 id SERIAL PRIMARY KEY,
                 pipeline_run_id UUID NOT NULL,
-                pipeline_mode TEXT NOT NULL,
                 entity_id TEXT,
                 run_name TEXT,
                 overall TEXT NOT NULL,
@@ -857,8 +855,8 @@ async def _seed_narrative() -> None:
                 "phase": "model",
                 "description": "Farm generates synthetic financial data for both entities.",
                 "messages": [
-                    {"text": "Generating financial model for Meridian...", "delay_ms": 2000},
-                    {"text": "Generating financial model for Cascadia...", "delay_ms": 2000},
+                    {"text": "Generating financial model for acquirer...", "delay_ms": 2000},
+                    {"text": "Generating financial model for target...", "delay_ms": 2000},
                     {"text": "9,350 triples generated and pushed to PG.", "delay_ms": 3000},
                 ],
             },
@@ -923,11 +921,11 @@ async def save_pipeline_job(job) -> None:
         await conn.execute(
             """
             INSERT INTO console.pipeline_jobs
-                (pipeline_run_id, run_name, pipeline_mode, execution_mode,
+                (pipeline_run_id, run_name, execution_mode,
                  status, started_at, completed_at, steps, current_step,
                  total_steps, message, config)
-            VALUES ($1::uuid, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz,
-                    $8::jsonb, $9, $10, $11, $12::jsonb)
+            VALUES ($1::uuid, $2, $3, $4, $5::timestamptz, $6::timestamptz,
+                    $7::jsonb, $8, $9, $10, $11::jsonb)
             ON CONFLICT (pipeline_run_id) DO UPDATE
                 SET run_name = EXCLUDED.run_name,
                     status = EXCLUDED.status,
@@ -938,7 +936,6 @@ async def save_pipeline_job(job) -> None:
             """,
             job.pipeline_run_id,
             job.run_name,
-            job.pipeline_mode.value if hasattr(job.pipeline_mode, 'value') else job.pipeline_mode,
             job.execution_mode.value if hasattr(job.execution_mode, 'value') else job.execution_mode,
             job.status,
             _parse_dt(job.started_at),
@@ -959,7 +956,7 @@ async def get_pipeline_jobs(limit: int = 20) -> list[dict[str, Any]]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT pipeline_run_id, run_name, pipeline_mode, execution_mode,
+            SELECT pipeline_run_id, run_name, execution_mode,
                    status, started_at, completed_at, steps, current_step,
                    total_steps, message, config, created_at
             FROM console.pipeline_jobs
@@ -972,7 +969,6 @@ async def get_pipeline_jobs(limit: int = 20) -> list[dict[str, Any]]:
             {
                 "pipeline_run_id": str(r["pipeline_run_id"]),
                 "run_name": r["run_name"],
-                "pipeline_mode": r["pipeline_mode"],
                 "execution_mode": r["execution_mode"],
                 "status": r["status"],
                 "started_at": r["started_at"].isoformat() if r["started_at"] else None,
@@ -996,7 +992,7 @@ async def get_pipeline_job(pipeline_run_id: str) -> dict[str, Any] | None:
     async with _pool.acquire() as conn:
         r = await conn.fetchrow(
             """
-            SELECT pipeline_run_id, run_name, pipeline_mode, execution_mode,
+            SELECT pipeline_run_id, run_name, execution_mode,
                    status, started_at, completed_at, steps, current_step,
                    total_steps, message, config, created_at
             FROM console.pipeline_jobs
@@ -1009,7 +1005,6 @@ async def get_pipeline_job(pipeline_run_id: str) -> dict[str, Any] | None:
         return {
             "pipeline_run_id": str(r["pipeline_run_id"]),
             "run_name": r["run_name"],
-            "pipeline_mode": r["pipeline_mode"],
             "execution_mode": r["execution_mode"],
             "status": r["status"],
             "started_at": r["started_at"].isoformat() if r["started_at"] else None,
@@ -1028,7 +1023,6 @@ async def get_pipeline_job(pipeline_run_id: str) -> dict[str, Any] | None:
 
 async def save_recon(
     pipeline_run_id: str,
-    pipeline_mode: str,
     entity_id: str | None,
     run_name: str | None,
     overall: str,
@@ -1046,11 +1040,11 @@ async def save_recon(
         row = await conn.fetchrow(
             """
             INSERT INTO console.recon_history
-                (pipeline_run_id, pipeline_mode, entity_id, run_name, overall, checks)
-            VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb)
+                (pipeline_run_id, entity_id, run_name, overall, checks)
+            VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
             RETURNING id
             """,
-            pipeline_run_id, pipeline_mode, entity_id, run_name,
+            pipeline_run_id, entity_id, run_name,
             overall, json.dumps(checks),
         )
         return row["id"] if row else None
@@ -1092,7 +1086,7 @@ async def get_recon_snapshot(history_id: int) -> dict[str, Any] | None:
     async with _pool.acquire() as conn:
         r = await conn.fetchrow(
             """
-            SELECT id, pipeline_run_id, pipeline_mode, entity_id,
+            SELECT id, pipeline_run_id, entity_id,
                    run_name, overall, checks, created_at
             FROM console.recon_history
             WHERE id = $1
@@ -1104,7 +1098,6 @@ async def get_recon_snapshot(history_id: int) -> dict[str, Any] | None:
         return {
             "history_id": r["id"],
             "pipeline_run_id": str(r["pipeline_run_id"]),
-            "pipeline_mode": r["pipeline_mode"],
             "entity_id": r["entity_id"],
             "run_name": r["run_name"],
             "overall": r["overall"],

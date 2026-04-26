@@ -9,7 +9,6 @@ from backend.app import config, db
 from backend.app.models.pipeline import (
     ExecutionMode,
     PipelineJob,
-    PipelineMode,
     StartPipelineRequest,
     StartPipelineResponse,
     StepStatus,
@@ -26,32 +25,26 @@ router = APIRouter()
 
 @router.post("/start", response_model=StartPipelineResponse)
 async def start_pipeline(req: StartPipelineRequest, background_tasks: BackgroundTasks):
-    """Start an SE or ME pipeline in batch or step-by-step mode."""
+    """Start an SE pipeline in batch or step-by-step mode."""
     pipeline_run_id = str(uuid.uuid4())
 
     cfg = req.config or {}
 
-    # Provisional run_name — SE: updated when entity_id becomes available.
-    # ME: updated by pre-flight when engagement_short_name is resolved.
+    # Provisional run_name — updated when entity_id becomes available.
     entity_id = cfg.get("entity_id")
     run_name = pipeline_orchestrator.make_run_name(entity_id, pipeline_run_id)
 
-    steps = (pipeline_orchestrator.create_se_steps()
-             if req.mode == PipelineMode.SE
-             else pipeline_orchestrator.create_me_steps())
-
+    steps = pipeline_orchestrator.create_se_steps()
     total = len(steps)
 
     job = PipelineJob(
         pipeline_run_id=pipeline_run_id,
         run_name=run_name,
-        pipeline_mode=req.mode,
         execution_mode=req.execution,
         started_at=pipeline_orchestrator._now(),
         steps=steps,
         total_steps=total,
-        message=f"{req.mode.value.upper()} pipeline started "
-                f"({req.execution.value} mode)",
+        message=f"SE pipeline started ({req.execution.value} mode)",
         config=cfg,
     )
 
@@ -60,23 +53,21 @@ async def start_pipeline(req: StartPipelineRequest, background_tasks: Background
     if req.execution == ExecutionMode.BATCH:
         background_tasks.add_task(pipeline_orchestrator.run_pipeline_batch,
                                   pipeline_run_id)
-        logger.info(f"[PIPELINE] {req.mode.value.upper()} batch pipeline "
-                    f"started: pipeline_run_id={pipeline_run_id}, "
-                    f"run_name={run_name}")
+        logger.info(f"[PIPELINE] SE batch pipeline started: "
+                    f"pipeline_run_id={pipeline_run_id}, run_name={run_name}")
     else:
         first_indices = pipeline_orchestrator.get_next_step_indices(job)
         if first_indices:
             background_tasks.add_task(pipeline_orchestrator.run_single_step,
                                       pipeline_run_id, first_indices)
-            logger.info(f"[PIPELINE] {req.mode.value.upper()} step pipeline "
-                        f"started: pipeline_run_id={pipeline_run_id}, "
-                        f"run_name={run_name}")
+            logger.info(f"[PIPELINE] SE step pipeline started: "
+                        f"pipeline_run_id={pipeline_run_id}, run_name={run_name}")
 
     return StartPipelineResponse(
         pipeline_run_id=pipeline_run_id,
         run_name=run_name,
         status="started",
-        message=f"{req.mode.value.upper()} pipeline started. "
+        message=f"SE pipeline started. "
                 f"Poll /api/pipeline/status?pipeline_run_id={pipeline_run_id} "
                 f"for progress.",
     )
@@ -134,40 +125,22 @@ async def advance_pipeline(pipeline_run_id: str, background_tasks: BackgroundTas
 @router.post("/run")
 async def run_pipeline_legacy(req: dict):
     """Legacy blocking pipeline run — redirects to new start endpoint."""
-    mode_str = req.get("mode", "SE").upper()
-    if mode_str not in ("SE", "ME"):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid mode '{mode_str}'. Must be 'SE' or 'ME'.",
-        )
-    mode = PipelineMode.SE if mode_str == "SE" else PipelineMode.ME
-    entities = req.get("entities", [])
-    if mode == PipelineMode.ME and len(entities) < 2:
-        raise HTTPException(
-            status_code=400,
-            detail="ME mode requires at least 2 entities.",
-        )
-
     pipeline_run_id = str(uuid.uuid4())
     entity_id = (req.get("config") or {}).get("entity_id")
     run_name = pipeline_orchestrator.make_run_name(entity_id, pipeline_run_id)
 
-    steps = (pipeline_orchestrator.create_se_steps()
-             if mode == PipelineMode.SE
-             else pipeline_orchestrator.create_me_steps())
-
+    steps = pipeline_orchestrator.create_se_steps()
     total = len(steps)
 
     job = PipelineJob(
         pipeline_run_id=pipeline_run_id,
         run_name=run_name,
-        pipeline_mode=mode,
         execution_mode=ExecutionMode.BATCH,
         started_at=pipeline_orchestrator._now(),
         steps=steps,
         total_steps=total,
-        message=f"{mode.value.upper()} pipeline started (batch mode)",
-        config={"entities": entities, **(req.get("config") or {})},
+        message="SE pipeline started (batch mode)",
+        config=req.get("config") or {},
     )
 
     PIPELINE_JOBS[pipeline_run_id] = job
@@ -282,7 +255,6 @@ async def get_dcl_recon(pipeline_run_id: str):
     # Persist to recon_history
     history_id = await db.save_recon(
         pipeline_run_id=pipeline_run_id,
-        pipeline_mode=job.pipeline_mode.value,
         entity_id=entity_id,
         run_name=job.run_name,
         overall=result.get("overall", "fail"),

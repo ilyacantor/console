@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { fetchChangeSummary } from '../api/client'
-import { useMode } from '../context/ModeContext'
-import { NAV_BY_MODE, type NavSection } from '../data/sidebarNav'
+import { SIDEBAR_NAV } from '../data/sidebarNav'
 
 export default function Sidebar() {
-  const { mode } = useMode()
-  const nav: NavSection[] = NAV_BY_MODE[mode]
+  const nav = SIDEBAR_NAV
   const [badgeCount, setBadgeCount] = useState(0)
 
   useEffect(() => {

@@ -18,15 +18,11 @@ import {
   fetchPipelineStatus,
   advancePipeline,
   fetchRuns,
-  fetchConvergenceEngagements,
   type PipelineStepData,
   type PipelineJobData,
-  type ConvergenceEngagement,
 } from '../api/client'
 import { useHealth } from '../context/HealthContext'
-import { useEngagement } from '../context/EngagementContext'
 import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
-import { useChatScope } from '../context/ChatScopeContext'
 
 // ── Status helpers ──────────────────────────────────────────────────
 
@@ -464,8 +460,6 @@ function StepDetail({ step }: { step: PipelineStepData }) {
 
 export default function Pipeline() {
   const { health } = useHealth()
-  const { activeEngagement } = useEngagement()
-  const [selectedMode, setSelectedMode] = useState<'se' | 'me'>('se')
   const [executionMode, setExecutionMode] = useState<'batch' | 'step'>('batch')
   const [activePipelineRunId, setActivePipelineRunId] = useState<string | null>(null)
   const [jobData, setJobData] = useState<PipelineJobData | null>(null)
@@ -476,38 +470,6 @@ export default function Pipeline() {
   const [selectedStepName, setSelectedStepName] = useState<string | null>(null)
   const [expandedRun, setExpandedRun] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  // Convergence engagements for ME mode dropdown
-  const [convergenceEngagements, setConvergenceEngagements] = useState<ConvergenceEngagement[]>([])
-  const [selectedConvergenceEngagement, setSelectedConvergenceEngagement] = useState<ConvergenceEngagement | null>(null)
-  const [loadingConvergenceEngagements, setLoadingConvergenceEngagements] = useState(false)
-  const [engagementsError, setEngagementsError] = useState<string | null>(null)
-
-  // Load Convergence engagements when ME mode selected
-  useEffect(() => {
-    if (selectedMode !== 'me') return
-    setLoadingConvergenceEngagements(true)
-    setEngagementsError(null)
-    fetchConvergenceEngagements('active')
-      .then((engagements) => {
-        const sorted = [...engagements].sort((a, b) => {
-          if (!a.created_at) return 1
-          if (!b.created_at) return -1
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        })
-        setConvergenceEngagements(sorted)
-        if (sorted.length > 0 && !selectedConvergenceEngagement) {
-          setSelectedConvergenceEngagement(sorted[0]!)
-        }
-      })
-      .catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error('Failed to load Convergence engagements:', msg)
-        setEngagementsError(msg)
-        setSelectedConvergenceEngagement(null)
-      })
-      .finally(() => setLoadingConvergenceEngagements(false))
-  }, [selectedMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load run history
   const loadRuns = useCallback(async () => {
@@ -592,18 +554,7 @@ export default function Pipeline() {
     setSelectedStepName(null)
     setStarting(true)
     try {
-      const config: Record<string, unknown> = {}
-      if (selectedMode === 'me') {
-        // ME: pass Convergence engagement identity — both entities run
-        if (selectedConvergenceEngagement) {
-          config.convergence_engagement_id = selectedConvergenceEngagement.engagement_id
-        }
-        // Also pass Console engagement_id for DB linkage
-        if (activeEngagement) {
-          config.engagement_id = activeEngagement.engagement_id
-        }
-      }
-      const result = await startPipeline(selectedMode, executionMode, config)
+      const result = await startPipeline(executionMode, {})
       setActivePipelineRunId(result.pipeline_run_id)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -636,19 +587,8 @@ export default function Pipeline() {
 
   const selectedStep = jobData?.steps.find((s) => s.name === selectedStepName)
 
-  // Engagement scope only when ME mode AND a Convergence engagement is selected.
-  // SE mode is single-entity — no engagement scope, no Meridian/Cascadia memory.
-  useChatScope({
-    engagement_id:
-      selectedMode === 'me'
-        ? selectedConvergenceEngagement?.engagement_id ?? null
-        : null,
-  })
-
   useSurfaceExtras('page:pipeline', {
     visible_panels: [
-      'mode selector',
-      'engagement selector',
       'pipeline steps',
       'run history',
     ],
@@ -656,12 +596,7 @@ export default function Pipeline() {
     last_errors: error ? [error] : [],
     extra: {
       page: 'pipeline',
-      pipeline_mode: selectedMode,
       execution_mode: executionMode,
-      me_engagement_id: selectedConvergenceEngagement?.engagement_id ?? null,
-      me_engagement_label: selectedConvergenceEngagement
-        ? `${selectedConvergenceEngagement.acquirer_entity_id} -> ${selectedConvergenceEngagement.target_entity_id}`
-        : null,
       active_run_id: activePipelineRunId,
       active_run_status: jobData?.status ?? null,
       active_run_terminal: jobTerminal,
@@ -698,29 +633,6 @@ export default function Pipeline() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* Pipeline Mode */}
-          <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '0.5px solid var(--border)' }}>
-            {(['se', 'me'] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setSelectedMode(m)}
-                disabled={!!isRunning}
-                style={{
-                  padding: '5px 14px',
-                  fontSize: '12px',
-                  fontWeight: selectedMode === m ? 600 : 400,
-                  background: selectedMode === m ? '#2563EB' : 'var(--bg-card)',
-                  color: selectedMode === m ? '#fff' : 'var(--text-secondary)',
-                  border: 'none',
-                  cursor: isRunning ? 'not-allowed' : 'pointer',
-                  opacity: isRunning ? 0.5 : 1,
-                }}
-              >
-                {m.toUpperCase()}
-              </button>
-            ))}
-          </div>
-
           {/* Execution Mode */}
           <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '0.5px solid var(--border)' }}>
             {(['batch', 'step'] as const).map((m) => (
@@ -743,81 +655,30 @@ export default function Pipeline() {
             ))}
           </div>
 
-          {/* Engagement selector (ME mode — from Convergence API) */}
-          {selectedMode === 'me' && (
-            <div style={{ position: 'relative' }}>
-              <select
-                data-testid="me-engagement-dropdown"
-                value={selectedConvergenceEngagement?.engagement_id ?? ''}
-                onChange={(e) => {
-                  const eng = convergenceEngagements.find(
-                    (c) => c.engagement_id === e.target.value)
-                  if (eng) setSelectedConvergenceEngagement(eng)
-                }}
-                disabled={!!isRunning || loadingConvergenceEngagements || !!engagementsError}
-                style={{
-                  padding: '5px 10px',
-                  fontSize: '11px',
-                  borderRadius: '8px',
-                  border: engagementsError ? '1px solid #F87171' : '0.5px solid var(--border)',
-                  background: engagementsError ? 'rgba(248,113,113,0.08)' : 'var(--bg-card)',
-                  color: engagementsError ? '#F87171' : '#fff',
-                  cursor: isRunning ? 'not-allowed' : 'pointer',
-                  opacity: isRunning ? 0.5 : 1,
-                  minWidth: '160px',
-                }}
-              >
-                {loadingConvergenceEngagements && (
-                  <option value="">Loading engagements...</option>
-                )}
-                {!loadingConvergenceEngagements && engagementsError && (
-                  <option value="" data-testid="me-engagement-error">
-                    Failed to load engagements: {engagementsError}
-                  </option>
-                )}
-                {!loadingConvergenceEngagements && !engagementsError && convergenceEngagements.length === 0 && (
-                  <option value="" data-testid="me-engagement-empty">No engagements in tenant</option>
-                )}
-                {!engagementsError && convergenceEngagements.map((eng) => (
-                  <option key={eng.engagement_id} value={eng.engagement_id}>
-                    {eng.engagement_short_name || `${eng.acquirer_entity_id} + ${eng.target_entity_id}`}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
           {/* Run */}
-          {(() => {
-            const runBlocked = selectedMode === 'me' && (!!engagementsError || !selectedConvergenceEngagement)
-            const runDisabled = !canStart || starting || runBlocked
-            return (
-              <button
-                onClick={handleStart}
-                disabled={runDisabled}
-                title={engagementsError ? `Cannot run: ${engagementsError}` : undefined}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '5px 14px',
-                  fontSize: '12px',
-                  fontWeight: 500,
-                  borderRadius: '8px',
-                  background: '#2563EB',
-                  color: '#fff',
-                  border: 'none',
-                  cursor: runDisabled ? 'not-allowed' : 'pointer',
-                  opacity: runDisabled ? 0.5 : 1,
-                }}
-              >
-                {starting
-                  ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                  : <Play size={14} />}
-                Run {selectedMode.toUpperCase()}
-              </button>
-            )
-          })()}
+          <button
+            onClick={handleStart}
+            disabled={!canStart || starting}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '5px 14px',
+              fontSize: '12px',
+              fontWeight: 500,
+              borderRadius: '8px',
+              background: '#2563EB',
+              color: '#fff',
+              border: 'none',
+              cursor: !canStart || starting ? 'not-allowed' : 'pointer',
+              opacity: !canStart || starting ? 0.5 : 1,
+            }}
+          >
+            {starting
+              ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+              : <Play size={14} />}
+            Run
+          </button>
 
           {/* Next Step */}
           {isStepMode && hasActiveJob && !jobTerminal && nextStepName && (
@@ -925,10 +786,6 @@ export default function Pipeline() {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-            <span style={{ fontSize: '12px', color: '#9CA3AF' }}>
-              {jobData.pipeline_mode.toUpperCase()} Mode
-            </span>
-            <span style={{ fontSize: '11px', color: '#4B5563' }}>|</span>
             <span style={{ fontSize: '11px', color: '#6B7280' }}>{jobData.message}</span>
           </div>
 
@@ -942,22 +799,14 @@ export default function Pipeline() {
             onSelectStep={setSelectedStepName}
           />
 
-          {/* Farm Push Summary */}
-          {jobData.pipeline_mode === 'se' && <FarmPushSummary steps={jobData.steps} />}
+          <FarmPushSummary steps={jobData.steps} />
 
-          {/* Step Detail */}
           {selectedStep && <StepDetail step={selectedStep} />}
 
           {/* Footer */}
           <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px', color: '#6B7280' }}>
             <span data-testid="run-name-label" style={{ color: '#93C5FD', fontWeight: 500 }}>{jobData.run_name}</span>
-            {jobData.pipeline_mode === 'me' && !!jobData.config?.engagement_short_name && (
-              <>
-                <span>|</span>
-                <span data-testid="engagement-label">Engagement: {String(jobData.config.engagement_short_name)}</span>
-              </>
-            )}
-            {jobData.pipeline_mode === 'se' && !!jobData.config?.entity_id && (
+            {!!jobData.config?.entity_id && (
               <>
                 <span>|</span>
                 <span data-testid="entity-id-label">Entity: {String(jobData.config.entity_id)}</span>
@@ -992,7 +841,7 @@ export default function Pipeline() {
           }}
         >
           <Terminal size={40} color="#374151" style={{ marginBottom: '14px' }} />
-          <p style={{ fontSize: '13px', margin: 0 }}>Select a pipeline mode and click Run to begin.</p>
+          <p style={{ fontSize: '13px', margin: 0 }}>Click Run to start the pipeline.</p>
           <p style={{ fontSize: '11px', color: '#4B5563', marginTop: '4px' }}>
             Services must be healthy before running a pipeline.
           </p>
@@ -1016,7 +865,6 @@ export default function Pipeline() {
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 <th style={{ ...thStyle, textAlign: 'left' }}>Run</th>
-                <th style={thStyle}>Mode</th>
                 <th style={thStyle}>Execution</th>
                 <th style={thStyle}>Status</th>
                 <th style={thStyle}>Steps</th>
@@ -1062,21 +910,6 @@ function RunRow({ run, expanded, onToggle }: { run: PipelineJobData; expanded: b
         <td style={{ ...tdStyle, textAlign: 'left', fontSize: '11px' }}>
           <span data-testid="history-run-name" style={{ color: '#93C5FD', fontWeight: 500 }}>{run.run_name}</span>
         </td>
-        <td style={tdStyle}>
-          <span
-            style={{
-              display: 'inline-block',
-              padding: '1px 6px',
-              borderRadius: '4px',
-              fontSize: '10px',
-              fontWeight: 600,
-              background: run.pipeline_mode === 'me' ? '#2E1A47' : '#1A2A47',
-              color: run.pipeline_mode === 'me' ? '#A78BFA' : '#60A5FA',
-            }}
-          >
-            {run.pipeline_mode?.toUpperCase()}
-          </span>
-        </td>
         <td style={{ ...tdStyle, fontSize: '11px', color: '#9CA3AF' }}>
           {run.execution_mode}
         </td>
@@ -1104,7 +937,7 @@ function RunRow({ run, expanded, onToggle }: { run: PipelineJobData; expanded: b
       </tr>
       {expanded && run.steps && (
         <tr>
-          <td colSpan={6} style={{ padding: '8px 14px', background: 'var(--bg-hover)' }}>
+          <td colSpan={5} style={{ padding: '8px 14px', background: 'var(--bg-hover)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
               <tbody>
                 {run.steps.map((step) => (

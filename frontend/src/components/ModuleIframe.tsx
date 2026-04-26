@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { useHealth } from '../context/HealthContext'
-import { useEntity } from '../context/EntityContext'
 
 interface ModuleIframeProps {
   serviceName: string
@@ -15,12 +14,10 @@ export default function ModuleIframe({
   serviceName,
   baseUrl,
   title,
-  entityParam = true,
   minHeight = '600px',
   height = 'calc(100vh - 72px)',
 }: ModuleIframeProps) {
   const { health, getServiceStatus } = useHealth()
-  const { selected } = useEntity()
   const [iframeLoaded, setIframeLoaded] = useState(false)
   const [timedOut, setTimedOut] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -28,21 +25,6 @@ export default function ModuleIframe({
   const svc = getServiceStatus(serviceName)
   const isDown = svc?.status === 'down'
 
-  // Build iframe URL with optional entity param
-  let iframeSrc = baseUrl
-  if (entityParam && selected) {
-    const sep = baseUrl.includes('?') ? '&' : '?'
-    // Entity param not yet consumed by NLQ/DCL — passed for future use
-    iframeSrc = `${baseUrl}${sep}entity=${encodeURIComponent(selected)}`
-  }
-
-  // Reset loaded/timeout state when entity changes (iframe remounts via key)
-  useEffect(() => {
-    setIframeLoaded(false)
-    setTimedOut(false)
-  }, [selected])
-
-  // 15-second timeout for iframe load
   useEffect(() => {
     if (iframeLoaded || isDown) return
 
@@ -53,14 +35,13 @@ export default function ModuleIframe({
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
-  }, [iframeLoaded, isDown, selected])
+  }, [iframeLoaded, isDown])
 
   const handleLoad = () => {
     setIframeLoaded(true)
     if (timerRef.current) clearTimeout(timerRef.current)
   }
 
-  // Service is confirmed down per health check
   if (health && isDown) {
     return (
       <div
@@ -93,7 +74,6 @@ export default function ModuleIframe({
     )
   }
 
-  // Timed out waiting for iframe to load
   if (timedOut && !iframeLoaded) {
     return (
       <div
@@ -132,8 +112,7 @@ export default function ModuleIframe({
         </div>
       )}
       <iframe
-        key={selected ?? 'all'}
-        src={iframeSrc}
+        src={baseUrl}
         onLoad={handleLoad}
         style={{
           width: '100%',
