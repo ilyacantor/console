@@ -10,6 +10,10 @@ import Instrumentation from './pages/Instrumentation'
 import Config from './pages/Config'
 import NarrativeEditor from './pages/NarrativeEditor'
 import OperatorFeed from './pages/OperatorFeed'
+import PipelineCatalog from './pages/PipelineCatalog'
+import PipelineMappings from './pages/PipelineMappings'
+import PipelineIdentity from './pages/PipelineIdentity'
+import PipelineConsumer from './pages/PipelineConsumer'
 
 export default function App() {
   return (
@@ -17,6 +21,10 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/pipeline" replace />} />
         <Route path="/pipeline" element={<Pipeline />} />
+        <Route path="/pipelines/catalog" element={<PipelineCatalog />} />
+        <Route path="/pipelines/mappings" element={<PipelineMappings />} />
+        <Route path="/pipelines/identity" element={<PipelineIdentity />} />
+        <Route path="/pipelines/consumer" element={<PipelineConsumer />} />
         <Route path="/dashboards" element={<Dashboards />} />
         <Route path="/inspect" element={<Inspect />} />
         <Route path="/changes" element={<Changes />} />

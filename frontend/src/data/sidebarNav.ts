@@ -19,6 +19,16 @@ const OPERATE: NavSection = {
   ],
 }
 
+const PIPELINES: NavSection = {
+  title: 'PIPELINES',
+  items: [
+    { label: 'Catalog', path: '/pipelines/catalog', color: '#22D3EE' },
+    { label: 'Mappings', path: '/pipelines/mappings', color: '#22D3EE' },
+    { label: 'Identity', path: '/pipelines/identity', color: '#22D3EE' },
+    { label: 'Consumer', path: '/pipelines/consumer', color: '#22D3EE' },
+  ],
+}
+
 const MONITOR: NavSection = {
   title: 'MONITOR',
   items: [
@@ -46,4 +56,4 @@ const SYSTEM: NavSection = {
   ],
 }
 
-export const SIDEBAR_NAV: NavSection[] = [OPERATE, MONITOR, MAI, SYSTEM]
+export const SIDEBAR_NAV: NavSection[] = [OPERATE, PIPELINES, MONITOR, MAI, SYSTEM]

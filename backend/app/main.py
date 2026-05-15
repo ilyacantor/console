@@ -20,6 +20,7 @@ from backend.app.routes.mcp import router as mcp_router
 from backend.app.routes.narrative import router as narrative_router
 from backend.app.routes.operator_feed import router as operator_feed_router
 from backend.app.routes.pipeline import router as pipeline_router
+from backend.app.routes.pipelines import router as pipelines_router
 from backend.app.routes.proxy import router as proxy_router
 from backend.app.services import cron_scheduler
 
@@ -67,6 +68,7 @@ app.add_middleware(
 # Routes
 app.include_router(health_router, prefix="/api", tags=["Health"])
 app.include_router(pipeline_router, prefix="/api/pipeline", tags=["Pipeline"])
+app.include_router(pipelines_router, prefix="/api/pipelines", tags=["Pipelines (WP6)"])
 app.include_router(proxy_router, prefix="/api/proxy", tags=["Proxy"])
 app.include_router(changes_router, prefix="/api/changes", tags=["Changes"])
 app.include_router(config_router, prefix="/api/config", tags=["Config"])
