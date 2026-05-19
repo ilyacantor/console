@@ -24,6 +24,7 @@ const PIPELINES: NavSection = {
   items: [
     { label: 'Catalog', path: '/pipelines/catalog', color: '#22D3EE' },
     { label: 'Mappings', path: '/pipelines/mappings', color: '#22D3EE' },
+    { label: 'Mappings Review', path: '/mappings/review', color: '#22D3EE' },
     { label: 'Identity', path: '/pipelines/identity', color: '#22D3EE' },
     { label: 'Consumer', path: '/pipelines/consumer', color: '#22D3EE' },
   ],

@@ -12,6 +12,7 @@ import NarrativeEditor from './pages/NarrativeEditor'
 import OperatorFeed from './pages/OperatorFeed'
 import PipelineCatalog from './pages/PipelineCatalog'
 import PipelineMappings from './pages/PipelineMappings'
+import MappingsReview from './pages/MappingsReview'
 import PipelineIdentity from './pages/PipelineIdentity'
 import PipelineConsumer from './pages/PipelineConsumer'
 
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/pipelines/catalog" element={<PipelineCatalog />} />
         <Route path="/pipelines/mappings" element={<PipelineMappings />} />
+        <Route path="/mappings/review" element={<MappingsReview />} />
         <Route path="/pipelines/identity" element={<PipelineIdentity />} />
         <Route path="/pipelines/consumer" element={<PipelineConsumer />} />
         <Route path="/dashboards" element={<Dashboards />} />
