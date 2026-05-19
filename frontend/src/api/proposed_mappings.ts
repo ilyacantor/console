@@ -49,3 +49,31 @@ export async function fetchProposedMappings(opts?: {
   }
   return resp.json()
 }
+
+
+// WS-5 B5 — operator accept/reject write path.
+// decision='auto_apply' or 'rejected'; the AAM endpoint validates.
+export async function decideProposedMapping(args: {
+  tenant_id: string
+  source_system: string
+  vendor: string
+  source_field: string
+  decision: 'auto_apply' | 'rejected'
+}): Promise<{ proposal: ProposedMapping }> {
+  const resp = await fetch('/api/proxy/aam/api/aam/proposed-mappings/decision', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  })
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`
+    try {
+      const body = await resp.json()
+      if (body.detail) detail = body.detail
+    } catch {
+      // ignore parse errors
+    }
+    throw new Error(detail)
+  }
+  return resp.json()
+}

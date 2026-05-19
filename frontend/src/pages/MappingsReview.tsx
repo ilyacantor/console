@@ -5,6 +5,7 @@
 // reasoning + sample values. B5 will add accept/reject write actions.
 import { useEffect, useState } from 'react'
 import {
+  decideProposedMapping,
   fetchProposedMappings,
   type ProposedMapping,
   type ProposedMappingsResponse,
@@ -41,6 +42,7 @@ export default function MappingsReview() {
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<ProposedMapping | null>(null)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+  const [pending, setPending] = useState<string | null>(null)
 
   const load = async () => {
     setError(null)
@@ -50,6 +52,28 @@ export default function MappingsReview() {
       setLastRefresh(new Date())
     } catch (e) {
       setError((e as Error).message)
+    }
+  }
+
+  const decide = async (p: ProposedMapping, decision: 'auto_apply' | 'rejected') => {
+    const key = `${p.tenant_id}::${p.vendor}::${p.source_field}`
+    setPending(key)
+    setError(null)
+    try {
+      const res = await decideProposedMapping({
+        tenant_id: p.tenant_id,
+        source_system: p.source_system,
+        vendor: p.vendor,
+        source_field: p.source_field,
+        decision,
+      })
+      // Reflect the new status locally without waiting for the next poll
+      setSelected(res.proposal)
+      await load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setPending(null)
     }
   }
 
@@ -188,6 +212,54 @@ export default function MappingsReview() {
                   {selected.reasoning ?? <em style={{ color: 'var(--text-muted)' }}>(no reasoning recorded)</em>}
                 </div>
               </div>
+
+              {/* WS-5 B5 — accept/reject buttons. Shown only when the
+                  current status is operator-actionable. Already-decided
+                  rows (auto_apply / rejected) and terminal rows
+                  (no_proposal / capped / failed) hide the buttons. */}
+              {selected.status === 'proposed' && (
+                <div style={{ marginTop: 16, display: 'flex', gap: 8 }} data-testid="decision-actions">
+                  {(() => {
+                    const key = `${selected.tenant_id}::${selected.vendor}::${selected.source_field}`
+                    const isPending = pending === key
+                    return (
+                      <>
+                        <button
+                          disabled={isPending}
+                          onClick={() => decide(selected, 'auto_apply')}
+                          data-testid="btn-accept"
+                          style={{
+                            padding: '6px 14px', borderRadius: 4, fontSize: 12,
+                            background: 'rgba(34,197,94,0.22)', color: '#86EFAC',
+                            border: '1px solid rgba(34,197,94,0.35)',
+                            cursor: isPending ? 'wait' : 'pointer',
+                          }}
+                        >
+                          {isPending ? 'Applying...' : 'Accept (auto-apply)'}
+                        </button>
+                        <button
+                          disabled={isPending}
+                          onClick={() => decide(selected, 'rejected')}
+                          data-testid="btn-reject"
+                          style={{
+                            padding: '6px 14px', borderRadius: 4, fontSize: 12,
+                            background: 'rgba(239,68,68,0.22)', color: '#FCA5A5',
+                            border: '1px solid rgba(239,68,68,0.35)',
+                            cursor: isPending ? 'wait' : 'pointer',
+                          }}
+                        >
+                          {isPending ? 'Applying...' : 'Reject'}
+                        </button>
+                      </>
+                    )
+                  })()}
+                </div>
+              )}
+              {(selected.status === 'auto_apply' || selected.status === 'rejected') && (
+                <div style={{ marginTop: 16, fontSize: 12, color: 'var(--text-muted)' }} data-testid="decided-note">
+                  Decided ({selected.status}). The next ingest run will reflect this on the field.
+                </div>
+              )}
             </div>
           )}
         </div>
