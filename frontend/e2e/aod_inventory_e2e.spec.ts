@@ -1,41 +1,23 @@
-// Operator-visible outcome: operator navigates to /aod/inventory with the tour active and sees 47 rows in the AOD table (one per Crestline app), with the summary cards reading "47" total apps, "6" systems of record, and "9" shadow/unmanaged, and the Salesforce row carrying the SOR badge while Notion's row carries a "shadow" governance pill.
+// Operator-visible outcome: operator navigates to /aod/inventory with the tour active and sees an iframe whose src matches the configured AOD base URL (VITE_AOD_URL or http://localhost:8001), the iframe carries the title "AOD Discovery", and Mai's surface-extras get_surface_state reports the iframe_url + module="AOD" for that route. Outside the tour the same iframe renders against the same URL — Console's job is to host AOD, not rebuild it.
 
 import { test, expect } from '@playwright/test'
-import { ALL_APPS } from '../src/demo/seed'
 
-const SOR_COUNT = ALL_APPS.filter((a) => a.is_sor).length
-const SHADOW_COUNT = ALL_APPS.filter((a) => a.governance === 'shadow' || a.governance === 'unmanaged').length
+const AOD_BASE = process.env.VITE_AOD_URL || 'http://localhost:8001'
 
-test('AOD inventory — table renders one row per seeded Crestline app with governance + SOR', async ({ page }) => {
+test('AOD inventory — Console iframes the real AOD Discovery surface', async ({ page }) => {
   await page.goto('/aod/inventory?tour=deploy&stage=aod-scan')
 
-  const table = page.locator('[data-testid="aod-table"]')
-  await expect(table).toHaveAttribute('data-testid', 'aod-table')
-
-  const rows = page.locator('[data-testid="aod-row"]')
-  await expect(rows).toHaveCount(ALL_APPS.length)
-
-  // Summary card values match seed-derived ground truth.
-  await expect(page.locator('[data-testid="aod-summary"]')).toContainText(String(ALL_APPS.length))
-  await expect(page.locator('[data-testid="aod-summary"]')).toContainText(String(SOR_COUNT))
-  await expect(page.locator('[data-testid="aod-summary"]')).toContainText(String(SHADOW_COUNT))
-
-  // Salesforce row is tagged SOR.
-  const sfdcRow = page.locator('[data-testid="aod-row"][data-app-id="sfdc"]')
-  await expect(sfdcRow.locator('[data-testid="sor-badge"]')).toHaveText('SOR')
-
-  // Notion row carries the shadow governance pill (no SOR badge).
-  const notiRow = page.locator('[data-testid="aod-row"][data-app-id="noti"]')
-  await expect(notiRow).toContainText('shadow')
-  await expect(notiRow.locator('[data-testid="sor-badge"]')).toBeHidden()
+  const iframe = page.locator('iframe[title="AOD Discovery"]')
+  const src = await iframe.getAttribute('src')
+  expect(src).toBe(AOD_BASE)
 
   await page.screenshot({ path: 'e2e/screenshots/aod-inventory-snapshot.png', fullPage: true })
 })
 
-test('AOD inventory — outside the tour the empty state explains there is no live AOD data', async ({ page }) => {
+test('AOD inventory — same iframe renders outside the tour (real route, real module)', async ({ page }) => {
   await page.goto('/aod/inventory')
 
-  await expect(page.locator('[data-testid="aod-empty-state"]')).toContainText('No active AOD discovery run')
-  // The seeded table is not rendered outside the tour.
-  await expect(page.locator('[data-testid="aod-table"]')).toBeHidden()
+  const iframe = page.locator('iframe[title="AOD Discovery"]')
+  const src = await iframe.getAttribute('src')
+  expect(src).toBe(AOD_BASE)
 })
