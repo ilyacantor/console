@@ -5,6 +5,9 @@ import {
 } from '../api/client'
 import ModuleIframe from '../components/ModuleIframe'
 import { useIdentity } from '../api/identity'
+import { useEnvSnapshot } from '../hooks/useEnvSnapshot'
+import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
+import { coverageAtStage, PROVENANCE_EXAMPLES } from '../demo/seed'
 
 type Tab = 'coverage' | 'sources' | 'lineage'
 
@@ -40,19 +43,74 @@ interface OverviewData {
 const DCL_BASE = import.meta.env.VITE_DCL_URL || 'http://localhost:3004'
 
 export default function Inspect() {
+  const snapshot = useEnvSnapshot()
   const { identity } = useIdentity()
-  const [tab, setTab] = useState<Tab>('lineage')
+  const [tab, setTab] = useState<Tab>(snapshot ? 'coverage' : 'lineage')
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [overviewError, setOverviewError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [tabAutoSwitched, setTabAutoSwitched] = useState(false)
 
   const tenantId = identity?.tenant_id
+
+  // TourContext loads the snapshot asynchronously on mount (via URL parse),
+  // so the useState initializer above may run with snapshot=null even when
+  // the URL has ?tour=deploy. Auto-switch once to coverage when the
+  // snapshot first appears; honor manual tab changes after.
+  useEffect(() => {
+    if (snapshot && !tabAutoSwitched) {
+      setTab('coverage')
+      setTabAutoSwitched(true)
+    }
+  }, [snapshot, tabAutoSwitched])
+
+  useSurfaceExtras('page:inspect', {
+    visible_panels: snapshot
+      ? ['Coverage', 'Sources', 'Lineage iframe', 'Per-record provenance ribbon']
+      : ['Coverage', 'Sources', 'Lineage iframe'],
+    extra: {
+      page: 'inspect',
+      active_tab: tab,
+      domain_count: overview?.domains.length ?? 0,
+      total_triples: overview?.total_triples ?? 0,
+      data_source: snapshot ? 'tour-snapshot' : 'live-dcl',
+    },
+  })
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
+      if (snapshot) {
+        const seedDomains = coverageAtStage(snapshot)
+        const next: OverviewData = {
+          total_triples: seedDomains.reduce((acc, d) => acc + d.records_total, 0),
+          domains: seedDomains.map((d) => ({
+            domain: d.domain,
+            triples: d.records_total,
+            concepts: d.concepts_total,
+            confidence: d.confidence,
+          })),
+          sources: [
+            { source: 'Salesforce', triples: 78_500, confidence: 0.95, last_updated: 'just now' },
+            { source: 'Workday', triples: 22_400, confidence: 0.97, last_updated: 'just now' },
+            { source: 'NetSuite', triples: 184_220, confidence: 0.93, last_updated: 'just now' },
+            { source: 'Charles River IMS', triples: 142_900, confidence: 0.94, last_updated: 'just now' },
+            { source: 'ServiceNow', triples: 3_420, confidence: 0.88, last_updated: 'just now' },
+            { source: 'Crestline Billing API', triples: 28_400, confidence: 0.92, last_updated: 'just now' },
+          ],
+          entity_breakdown: { Crestline: seedDomains.reduce((acc, d) => acc + d.records_total, 0) },
+          pending_resolution: 0,
+          total_resolution: 0,
+        }
+        if (!cancelled) {
+          setOverview(next)
+          setOverviewError(null)
+          setLoading(false)
+        }
+        return
+      }
       try {
         const [overviewRaw, ctxRaw] = await Promise.all([
           fetchDclTriplesOverview(tenantId) as Promise<Record<string, unknown>>,
@@ -76,7 +134,7 @@ export default function Inspect() {
     return () => {
       cancelled = true
     }
-  }, [tenantId])
+  }, [tenantId, snapshot])
 
   const domainCount = overview?.domains.filter((d) => d.triples > 0).length ?? 0
   const totalDomains = overview?.domains.length ?? 0
@@ -91,6 +149,7 @@ export default function Inspect() {
         {TABS.map((t) => (
           <button
             key={t.key}
+            data-testid={`inspect-tab-${t.key}`}
             onClick={() => setTab(t.key)}
             style={{
               padding: '5px 14px',
@@ -142,9 +201,65 @@ export default function Inspect() {
         </div>
       )}
 
-      {tab === 'coverage' && <CoverageTab domains={overview?.domains ?? []} />}
+      {tab === 'coverage' && (
+        <>
+          <CoverageTab domains={overview?.domains ?? []} />
+          {snapshot && <ProvenanceRibbon />}
+        </>
+      )}
       {tab === 'sources' && <SourcesTab sources={overview?.sources ?? []} />}
       {tab === 'lineage' && <LineageTab />}
+    </div>
+  )
+}
+
+function ProvenanceRibbon() {
+  return (
+    <div
+      data-testid="provenance-ribbon"
+      style={{
+        background: 'var(--bg-card)',
+        border: '0.5px solid var(--border)',
+        borderRadius: '12px',
+        padding: '14px',
+      }}
+    >
+      <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>
+        Per-record provenance
+      </div>
+      <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '10px' }}>
+        Every record carries its source-system → fabric → concept chain. Examples below.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {PROVENANCE_EXAMPLES.map((ex) => (
+          <div
+            key={ex.example_record}
+            data-testid="provenance-row"
+            data-domain={ex.domain}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '140px 1fr auto',
+              gap: 12,
+              alignItems: 'center',
+              padding: '8px 10px',
+              border: '0.5px solid var(--border)',
+              borderRadius: '6px',
+              fontSize: 12,
+            }}
+          >
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{ex.domain}</span>
+            <span>
+              <strong style={{ fontWeight: 500 }}>{ex.example_record}</strong>
+              <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
+                {ex.chain.join(' → ')}
+              </span>
+            </span>
+            <span style={{ fontFamily: 'monospace', fontSize: 11, color: ex.confidence >= 0.9 ? '#86EFAC' : '#FCD34D' }}>
+              {ex.confidence.toFixed(2)}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -175,9 +290,9 @@ function CoverageTab({ domains }: { domains: DomainInfo[] }) {
   }
 
   return (
-    <div style={cardStyle}>
+    <div style={cardStyle} data-testid="coverage-card">
       <h2 style={{ fontSize: '13px', fontWeight: 600, marginBottom: '10px' }}>Domain coverage</h2>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }} data-testid="coverage-table">
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border)' }}>
             <th style={thLeft}>Domain</th>
@@ -188,7 +303,7 @@ function CoverageTab({ domains }: { domains: DomainInfo[] }) {
         </thead>
         <tbody>
           {sorted.map((d) => (
-            <tr key={d.domain} style={{ borderBottom: '1px solid var(--border)' }}>
+            <tr key={d.domain} data-testid="coverage-row" data-domain={d.domain} style={{ borderBottom: '1px solid var(--border)' }}>
               <td style={{ padding: '6px 8px' }}>{d.domain}</td>
               <td style={{ padding: '6px 8px', textAlign: 'center', position: 'relative' }}>
                 <div
@@ -379,14 +494,3 @@ const thCenter: React.CSSProperties = {
   color: 'var(--text-muted)',
   textTransform: 'uppercase',
 }
-
-const pillBase: React.CSSProperties = {
-  display: 'inline-block',
-  padding: '1px 6px',
-  borderRadius: '4px',
-  fontSize: '10px',
-  fontWeight: 600,
-}
-
-// Suppress unused warning for pillBase (kept for future tab additions).
-void pillBase

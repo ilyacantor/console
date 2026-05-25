@@ -15,6 +15,12 @@ import PipelineMappings from './pages/PipelineMappings'
 import MappingsReview from './pages/MappingsReview'
 import PipelineIdentity from './pages/PipelineIdentity'
 import PipelineConsumer from './pages/PipelineConsumer'
+import AodInventory from './pages/AodInventory'
+import SyntheticPreview from './pages/SyntheticPreview'
+import Credentials from './pages/Credentials'
+import Consumption from './pages/Consumption'
+import ContextOsConfig from './pages/ContextOsConfig'
+import TourRecap from './pages/TourRecap'
 
 export default function App() {
   return (
@@ -36,6 +42,13 @@ export default function App() {
         <Route path="/config" element={<Config />} />
         <Route path="/narrative-editor" element={<NarrativeEditor />} />
         <Route path="/operator-feed" element={<OperatorFeed />} />
+        {/* Deployment tour stage routes */}
+        <Route path="/aod/inventory" element={<AodInventory />} />
+        <Route path="/preview/synthetic" element={<SyntheticPreview />} />
+        <Route path="/deploy/credentials" element={<Credentials />} />
+        <Route path="/consumption" element={<Consumption />} />
+        <Route path="/contextos/config" element={<ContextOsConfig />} />
+        <Route path="/tour/recap" element={<TourRecap />} />
       </Routes>
     </Layout>
   )

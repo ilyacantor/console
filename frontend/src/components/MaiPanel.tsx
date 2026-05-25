@@ -29,6 +29,7 @@ import { useMaiStream } from '../hooks/useMaiStream';
 import { usePolledData } from '../hooks/usePolledData';
 import { getOrCreateSessionId, resetSessionId } from '../utils/chatSession';
 import { buildPresets } from './mai/presets';
+import { useTour } from '../context/TourContext';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -307,7 +308,8 @@ export default function MaiFloat({ currentPage, onSideOpen }: MaiFloatProps) {
   };
 
   const pageKey = currentPage.replace(/^\//, '').split('/')[0] || 'pipeline';
-  const presets = buildPresets({ pageKey, route: currentPage });
+  const { activeStageId } = useTour();
+  const presets = buildPresets({ pageKey, route: currentPage, tourStageId: activeStageId });
   const showPresets = messages.length === 0 && !isStreaming;
 
   // -------------------------------------------------------------------

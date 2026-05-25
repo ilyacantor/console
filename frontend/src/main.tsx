@@ -5,6 +5,7 @@ import App from './App'
 import SurfaceStateSync from './components/SurfaceStateSync'
 import { HealthProvider } from './context/HealthContext'
 import { SurfaceExtrasProvider } from './context/SurfaceExtrasContext'
+import { TourProvider } from './context/TourContext'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -13,7 +14,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <HealthProvider>
         <SurfaceExtrasProvider>
           <SurfaceStateSync />
-          <App />
+          <TourProvider>
+            <App />
+          </TourProvider>
         </SurfaceExtrasProvider>
       </HealthProvider>
     </BrowserRouter>

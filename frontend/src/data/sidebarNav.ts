@@ -57,4 +57,20 @@ const SYSTEM: NavSection = {
   ],
 }
 
-export const SIDEBAR_NAV: NavSection[] = [OPERATE, PIPELINES, MONITOR, MAI, SYSTEM]
+// Deployment tour — net-new stage routes. Outside the tour, each page
+// shows an empty state with a hint to start the tour. Tour is started
+// by navigating to any stage route with ?tour=deploy.
+const TOUR: NavSection = {
+  title: 'DEMO',
+  items: [
+    { label: 'Start tour', path: '/aod/inventory?tour=deploy&stage=aod-scan', color: '#0BCAD9' },
+    { label: 'AOD inventory', path: '/aod/inventory', color: '#0BCAD9', indent: true },
+    { label: 'Synthetic preview', path: '/preview/synthetic', color: '#0BCAD9', indent: true },
+    { label: 'Credentials + Edge', path: '/deploy/credentials', color: '#0BCAD9', indent: true },
+    { label: 'Consumption', path: '/consumption', color: '#0BCAD9', indent: true },
+    { label: 'contextOS', path: '/contextos/config', color: '#0BCAD9', indent: true },
+    { label: 'Tour recap', path: '/tour/recap', color: '#0BCAD9', indent: true },
+  ],
+}
+
+export const SIDEBAR_NAV: NavSection[] = [OPERATE, PIPELINES, MONITOR, MAI, SYSTEM, TOUR]

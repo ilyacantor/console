@@ -1,8 +1,9 @@
-// WS-5 B4 — Console HITL review surface for LLM-proposed field mappings.
+// WS-5 B4/B5 — Console HITL review surface for LLM-proposed field mappings.
 //
-// Read-only at B4. Lists rows from AAM's proposed_mappings table via the
-// /aam proxy. Polls every 30s. Selecting a row reveals the LLM
-// reasoning + sample values. B5 will add accept/reject write actions.
+// When a tour snapshot is active, the data source is the Crestline seed and
+// the TransportFlow left panel is rendered (Stage 5 "two-panel" beat). When
+// no snapshot is active, the page falls through to the live AAM proxy and
+// renders the existing two-column proposals/detail layout.
 import { useEffect, useState } from 'react'
 import {
   decideProposedMapping,
@@ -10,12 +11,15 @@ import {
   type ProposedMapping,
   type ProposedMappingsResponse,
 } from '../api/proposed_mappings'
+import TransportFlow from '../components/TransportFlow'
+import { useEnvSnapshot } from '../hooks/useEnvSnapshot'
+import { useSurfaceExtras } from '../context/SurfaceExtrasContext'
+import { mappingsAtStage, SEED_PIPES } from '../demo/seed'
 
 const POLL_INTERVAL_MS = 30_000
+const SEED_TENANT_ID = 'tour-seed-tenant'
 
 function statusStyle(status: string): React.CSSProperties {
-  // Match the existing PipelineMappings vocabulary: green=auto/healthy,
-  // amber=needs-review, red=blocked.
   switch (status) {
     case 'proposed':
       return { background: 'rgba(245,158,11,0.22)', color: '#FCD34D' }
@@ -25,6 +29,12 @@ function statusStyle(status: string): React.CSSProperties {
       return { background: 'rgba(107,114,128,0.22)', color: '#D1D5DB' }
     case 'no_proposal':
       return { background: 'rgba(59,130,246,0.22)', color: '#93C5FD' }
+    case 'auto_apply':
+    case 'auto_applied':
+    case 'confirmed':
+      return { background: 'rgba(34,197,94,0.22)', color: '#86EFAC' }
+    case 'rejected':
+      return { background: 'rgba(239,68,68,0.22)', color: '#FCA5A5' }
     default:
       return { background: 'rgba(107,114,128,0.22)', color: '#D1D5DB' }
   }
@@ -38,11 +48,13 @@ function confidenceColor(conf: number | null): string {
 }
 
 export default function MappingsReview() {
+  const snapshot = useEnvSnapshot()
   const [data, setData] = useState<ProposedMappingsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<ProposedMapping | null>(null)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
   const [pending, setPending] = useState<string | null>(null)
+  const [selectedPipeId, setSelectedPipeId] = useState<string>(SEED_PIPES[0]?.pipe_id ?? '')
 
   const load = async () => {
     setError(null)
@@ -59,6 +71,22 @@ export default function MappingsReview() {
     const key = `${p.tenant_id}::${p.vendor}::${p.source_field}`
     setPending(key)
     setError(null)
+    if (snapshot) {
+      // Seed mode: mutate the in-memory state only — no AAM write.
+      setData((prev) => {
+        if (!prev) return prev
+        const updated = prev.proposals.map((m) =>
+          m.tenant_id === p.tenant_id && m.vendor === p.vendor && m.source_field === p.source_field
+            ? { ...m, status: decision === 'auto_apply' ? 'capped' as const : 'failed' as const }
+            : m,
+        )
+        return { ...prev, proposals: updated }
+      })
+      const next: ProposedMapping = { ...p, status: decision === 'auto_apply' ? 'capped' : 'failed' }
+      setSelected(next)
+      setPending(null)
+      return
+    }
     try {
       const res = await decideProposedMapping({
         tenant_id: p.tenant_id,
@@ -67,7 +95,6 @@ export default function MappingsReview() {
         source_field: p.source_field,
         decision,
       })
-      // Reflect the new status locally without waiting for the next poll
       setSelected(res.proposal)
       await load()
     } catch (e) {
@@ -78,10 +105,50 @@ export default function MappingsReview() {
   }
 
   useEffect(() => {
+    if (snapshot) {
+      const seed = mappingsAtStage(snapshot)
+      const mapped: ProposedMapping[] = seed.visible.map((m) => ({
+        tenant_id: SEED_TENANT_ID,
+        source_system: m.source_system,
+        vendor: m.vendor,
+        source_field: m.source_field,
+        concept: m.concept,
+        property: m.property,
+        confidence: m.confidence,
+        reasoning: m.reasoning,
+        model_id: 'tour-seed-v1',
+        status: seedStatusToProposed(m.status),
+        created_at: '2026-05-01T00:00:00Z',
+        updated_at: '2026-05-01T00:00:00Z',
+      }))
+      const status_counts: Record<string, number> = {}
+      for (const m of mapped) status_counts[m.status] = (status_counts[m.status] ?? 0) + 1
+      // Honor the tour's confirmed-vs-total counts so the summary line is
+      // believable even though the visible row count is smaller (16 samples).
+      status_counts['confirmed_total'] = seed.confirmed
+      setData({ count: seed.total, status_counts, proposals: mapped })
+      setLastRefresh(new Date())
+      return
+    }
     load()
     const t = setInterval(load, POLL_INTERVAL_MS)
     return () => clearInterval(t)
-  }, [])
+  }, [snapshot])
+
+  const totalConfirmed = data?.status_counts['confirmed_total']
+
+  useSurfaceExtras('page:mappings-review', {
+    visible_panels: snapshot
+      ? ['Transport flow (left)', 'Proposals (right)', 'Proposal detail']
+      : ['Proposals', 'Proposal detail'],
+    extra: {
+      page: 'mappings-review',
+      mappings_visible: data?.proposals.length ?? 0,
+      mappings_total: data?.count ?? null,
+      mappings_confirmed_total: totalConfirmed ?? null,
+      data_source: snapshot ? 'tour-snapshot' : 'live-aam',
+    },
+  })
 
   return (
     <div style={{ padding: '16px 4px' }} data-testid="mappings-review">
@@ -89,7 +156,7 @@ export default function MappingsReview() {
         Semantic Mapping — LLM Review Queue
       </div>
       <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '16px' }}>
-        Fields the LLM proposed mappings for. Auto-applied at ≥0.95; mid-confidence (0.70–0.94) needs review. Read-only at this block — accept/reject ships in B5.
+        Fields the LLM proposed mappings for. Auto-applied at ≥0.95; mid-confidence needs review.
       </div>
 
       {error && (
@@ -101,28 +168,46 @@ export default function MappingsReview() {
       {data && (
         <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }} data-testid="status-summary">
           <span>{data.count} total</span>
-          {Object.entries(data.status_counts).map(([status, count]) => (
-            <span key={status}>
-              <span style={{ ...statusStyle(status), padding: '2px 8px', borderRadius: 10, marginRight: 4 }}>
-                {status}
-              </span>
-              {count}
+          {totalConfirmed !== undefined && (
+            <span data-testid="mappings-confirmed-count">
+              <span style={{ ...statusStyle('confirmed'), padding: '2px 8px', borderRadius: 10, marginRight: 4 }}>confirmed</span>
+              {totalConfirmed}
             </span>
-          ))}
+          )}
+          {Object.entries(data.status_counts)
+            .filter(([k]) => k !== 'confirmed_total')
+            .map(([status, count]) => (
+              <span key={status}>
+                <span style={{ ...statusStyle(status), padding: '2px 8px', borderRadius: 10, marginRight: 4 }}>
+                  {status}
+                </span>
+                {count}
+              </span>
+            ))}
           {lastRefresh && (
             <span style={{ marginLeft: 'auto' }}>
-              refreshed {lastRefresh.toLocaleTimeString()} · polls every 30s
+              refreshed {lastRefresh.toLocaleTimeString()}{snapshot ? '' : ' · polls every 30s'}
             </span>
           )}
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: snapshot ? '1fr 1.4fr 1.4fr' : '1fr 1fr',
+          gap: 16,
+        }}
+      >
+        {snapshot && (
+          <TransportFlow selectedPipeId={selectedPipeId} onSelectPipe={setSelectedPipeId} />
+        )}
+
         <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: 12 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>Proposals</div>
           {data && data.proposals.length === 0 && (
             <div style={{ color: 'var(--text-muted)', fontSize: 13 }} data-testid="empty-state">
-              No proposed mappings yet. The LLM proposer (WS-3 B5) runs when AAM_LLM_PROPOSE=1 and an unmapped field arrives from a webhook.
+              No proposed mappings yet.
             </div>
           )}
           {data && data.proposals.length > 0 && (
@@ -213,10 +298,6 @@ export default function MappingsReview() {
                 </div>
               </div>
 
-              {/* WS-5 B5 — accept/reject buttons. Shown only when the
-                  current status is operator-actionable. Already-decided
-                  rows (auto_apply / rejected) and terminal rows
-                  (no_proposal / capped / failed) hide the buttons. */}
               {selected.status === 'proposed' && (
                 <div style={{ marginTop: 16, display: 'flex', gap: 8 }} data-testid="decision-actions">
                   {(() => {
@@ -255,9 +336,9 @@ export default function MappingsReview() {
                   })()}
                 </div>
               )}
-              {(selected.status === 'auto_apply' || selected.status === 'rejected') && (
+              {(selected.status === 'capped' || selected.status === 'failed') && snapshot && (
                 <div style={{ marginTop: 16, fontSize: 12, color: 'var(--text-muted)' }} data-testid="decided-note">
-                  Decided ({selected.status}). The next ingest run will reflect this on the field.
+                  Decision recorded for this tour walkthrough. In live mode, the next ingest run will reflect it on the field.
                 </div>
               )}
             </div>
@@ -266,6 +347,13 @@ export default function MappingsReview() {
       </div>
     </div>
   )
+}
+
+function seedStatusToProposed(s: 'proposed' | 'confirmed' | 'rejected' | 'auto_applied'): ProposedMapping['status'] {
+  if (s === 'confirmed') return 'capped'
+  if (s === 'auto_applied') return 'capped'
+  if (s === 'rejected') return 'failed'
+  return 'proposed'
 }
 
 function Field({ label, children, mono }: { label: string; children: React.ReactNode; mono?: boolean }) {

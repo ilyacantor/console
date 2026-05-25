@@ -1,6 +1,12 @@
 /**
  * Mai preset suggestions — config-driven, per page context.
+ *
+ * When a tour stage is active, the per-stage preset config from
+ * `demo/maiStageConfig.ts` overrides the page-based defaults.
  */
+
+import { MAI_STAGE_CONFIG } from '../../demo/maiStageConfig'
+import type { StageId } from '../../demo/seed'
 
 const GENERIC_PRESETS: Record<string, string[]> = {
   pipeline: [
@@ -36,9 +42,13 @@ const GENERIC_PRESETS: Record<string, string[]> = {
 export interface PresetContext {
   pageKey: string
   route?: string
+  tourStageId?: StageId | null
 }
 
 export function buildPresets(ctx: PresetContext): string[] {
+  if (ctx.tourStageId && ctx.tourStageId in MAI_STAGE_CONFIG) {
+    return MAI_STAGE_CONFIG[ctx.tourStageId].presets
+  }
   return GENERIC_PRESETS[ctx.pageKey] ?? []
 }
 
