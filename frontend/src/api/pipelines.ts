@@ -169,7 +169,9 @@ export function fetchIdentityAudit(hitl_queue_id: string): Promise<IdentityAudit
 
 export interface ConsumerTriple {
   triple_id?: string
+  id?: string
   concept?: string
+  property?: string
   entity_id?: string
   period?: string | null
   value?: unknown
@@ -210,6 +212,7 @@ export function consumerProvenance(params: {
   tenant_id: string
   triple_id?: string
   concept?: string
+  property?: string
   entity_id?: string
   period?: string
 }): Promise<{ sources: ProvenanceSource[]; [key: string]: unknown }> {

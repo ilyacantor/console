@@ -223,6 +223,9 @@ class ConsumerProvenanceRequest(BaseModel):
     tenant_id: str
     triple_id: str | None = None
     concept: str | None = None
+    # Triple identity is (entity, concept, property, period) — property keeps
+    # the composite lookup exact when triple_id is unavailable (I3).
+    property: str | None = None
     entity_id: str | None = None
     period: str | None = None
 
@@ -313,6 +316,7 @@ async def consumer_provenance(req: ConsumerProvenanceRequest) -> dict[str, Any]:
             tenant_id=req.tenant_id,
             triple_id=req.triple_id,
             concept=req.concept,
+            property=req.property,
             entity_id=req.entity_id,
             period=req.period,
         )

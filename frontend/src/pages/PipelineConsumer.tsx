@@ -57,10 +57,19 @@ export default function PipelineConsumer() {
     setDrillError(null)
     setDrilling(true)
     try {
+      // Query rows expose the exact row id as triple_id (DCL returns both id
+      // and triple_id); drilling by id is exact. The composite fallback now
+      // carries property too — (concept, entity, period) alone is ambiguous
+      // across a concept's properties.
+      const exactId =
+        (typeof t.triple_id === 'string' && t.triple_id) ||
+        (typeof t.id === 'string' && t.id) ||
+        undefined
       const res = await consumerProvenance({
         tenant_id: tenantId,
-        triple_id: typeof t.triple_id === 'string' ? t.triple_id : undefined,
+        triple_id: exactId,
         concept: typeof t.concept === 'string' ? t.concept : undefined,
+        property: typeof t.property === 'string' ? t.property : undefined,
         entity_id: typeof t.entity_id === 'string' ? t.entity_id : undefined,
         period: typeof t.period === 'string' ? t.period : undefined,
       })

@@ -330,30 +330,25 @@ function PipelineFlow({
   )
 }
 
-// ── Farm Push Summary ───────────────────────────────────────────────
+// ── AAM Transport Summary ───────────────────────────────────────────
 
-function FarmPushSummary({ steps }: { steps: PipelineStepData[] }) {
-  const farmStep = steps.find((s) => s.name === 'farm_financials')
-  if (!farmStep || !farmStep.data) return null
-  if (farmStep.status !== 'success' && farmStep.status !== 'failed') return null
+function TransportSummary({ steps }: { steps: PipelineStepData[] }) {
+  const transportStep = steps.find((s) => s.name === 'aam_transport')
+  if (!transportStep || !transportStep.data) return null
+  if (transportStep.status !== 'success' && transportStep.status !== 'failed') return null
 
-  const data = farmStep.data as Record<string, any>
-  const rowsGenerated = data.rows_generated ?? null
-  const push = (data.push_result ?? {}) as Record<string, any>
-  const rowsAccepted = push.rows_accepted ?? null
-  const triplesWritten = push.triples_written ?? rowsAccepted
-  const sourceRows = data.source_rows ?? rowsGenerated
-  const tTotal = data.t_total_ms ?? farmStep.duration_ms
-  const tPush = data.t_push_ms ?? null
-
-  // Compute expansion factor
-  const expansionFactor = sourceRows && sourceRows > 0 && triplesWritten
-    ? (triplesWritten / sourceRows).toFixed(1)
-    : null
+  const data = transportStep.data as Record<string, any>
+  const planes: Array<Record<string, any>> = Array.isArray(data.planes) ? data.planes : []
+  const records = planes.reduce((acc, p) => acc + (Number(p.records) || 0), 0)
+  const conceptNames = new Set<string>()
+  for (const p of planes) {
+    for (const name of Object.keys(p.concepts ?? {})) conceptNames.add(name)
+  }
+  const ingestId: string | null = planes[0]?.dcl_ingest_id ?? null
 
   return (
     <div
-      data-testid="farm-push-summary"
+      data-testid="transport-summary"
       style={{
         marginTop: '10px',
         display: 'flex',
@@ -367,47 +362,31 @@ function FarmPushSummary({ steps }: { steps: PipelineStepData[] }) {
         color: '#9CA3AF',
       }}
     >
-      <div data-testid="volume-metric">
-        <span style={{ color: '#6B7280', marginRight: '6px' }}>Volume</span>
-        {rowsGenerated != null ? (
-          <>
-            <span style={{ color: '#E5E7EB' }}>{rowsGenerated.toLocaleString()}</span>
-            <span> triples</span>
-            {rowsAccepted != null && rowsAccepted !== rowsGenerated && (
-              <span style={{ color: rowsAccepted < rowsGenerated ? '#FBBF24' : '#4ADE80' }}>
-                {' '}({rowsAccepted.toLocaleString()} accepted)
-              </span>
-            )}
-          </>
-        ) : (
-          <span>—</span>
+      <div data-testid="transport-records" data-value={records}>
+        <span style={{ color: '#6B7280', marginRight: '6px' }}>Records</span>
+        <span style={{ color: '#E5E7EB' }}>{records.toLocaleString()}</span>
+      </div>
+      <div data-testid="transport-planes">
+        <span style={{ color: '#6B7280', marginRight: '6px' }}>Planes</span>
+        <span style={{ color: '#E5E7EB' }}>{planes.length || '—'}</span>
+        {planes.length > 0 && (
+          <span> ({planes.map((p) => p.plane).join(', ')})</span>
         )}
       </div>
-      <div>
-        <span style={{ color: '#6B7280', marginRight: '6px' }}>Batches</span>
-        <span style={{ color: '#E5E7EB' }}>{push.batch_count != null ? push.batch_count : '—'}</span>
+      <div data-testid="transport-concepts">
+        <span style={{ color: '#6B7280', marginRight: '6px' }}>Concepts</span>
+        <span style={{ color: '#E5E7EB' }}>{conceptNames.size}</span>
+      </div>
+      <div data-testid="transport-ingest">
+        <span style={{ color: '#6B7280', marginRight: '6px' }}>DCL ingest</span>
+        <span style={{ color: '#E5E7EB' }}>{ingestId ? String(ingestId).slice(0, 8) : '—'}</span>
       </div>
       <div>
         <span style={{ color: '#6B7280', marginRight: '6px' }}>Duration</span>
-        {tTotal != null ? (
-          <>
-            <span style={{ color: '#E5E7EB' }}>{formatDuration(tTotal)}</span>
-            {tPush != null && (
-              <span> (push {formatDuration(tPush)})</span>
-            )}
-          </>
-        ) : (
-          <span>—</span>
-        )}
+        <span style={{ color: '#E5E7EB' }}>
+          {transportStep.duration_ms != null ? formatDuration(transportStep.duration_ms) : '—'}
+        </span>
       </div>
-      {expansionFactor && (
-        <div data-testid="expansion-summary">
-          <span style={{ color: '#6B7280', marginRight: '6px' }}>Expansion</span>
-          <span style={{ color: '#4ADE80' }}>
-            {sourceRows?.toLocaleString()} rows → {triplesWritten?.toLocaleString()} triples ({expansionFactor}x)
-          </span>
-        </div>
-      )}
     </div>
   )
 }
@@ -419,6 +398,7 @@ function StepDetail({ step }: { step: PipelineStepData }) {
 
   return (
     <div
+      data-testid="step-detail"
       style={{
         marginTop: '14px',
         border: '0.5px solid var(--border)',
@@ -437,6 +417,7 @@ function StepDetail({ step }: { step: PipelineStepData }) {
       )}
       {step.data && (
         <pre
+          data-testid="step-detail-json"
           style={{
             fontSize: '11px',
             color: '#9CA3AF',
@@ -799,7 +780,7 @@ export default function Pipeline() {
             onSelectStep={setSelectedStepName}
           />
 
-          <FarmPushSummary steps={jobData.steps} />
+          <TransportSummary steps={jobData.steps} />
 
           {selectedStep && <StepDetail step={selectedStep} />}
 

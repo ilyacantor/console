@@ -11,6 +11,10 @@ import httpx
 from backend.app import config
 
 _TIMEOUT = 10.0
+# The Ask probe is a data-visibility check, not a latency SLA — under suite
+# load NLQ resolves against a fat dev DCL and can exceed 10s. NLQ's own perf
+# suites own its latency ceilings.
+_QUERY_TIMEOUT = 60.0
 
 
 async def pipeline_status(client: httpx.AsyncClient) -> dict:
@@ -45,7 +49,7 @@ async def query(
         url,
         json=payload,
         headers={"Content-Type": "application/json"},
-        timeout=_TIMEOUT,
+        timeout=_QUERY_TIMEOUT,
     )
     resp.raise_for_status()
     return resp.json()

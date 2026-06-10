@@ -186,20 +186,24 @@ async def list_domains(tenant_id: str) -> dict[str, Any]:
 async def provenance(*, tenant_id: str,
                      triple_id: str | None = None,
                      concept: str | None = None,
+                     property: str | None = None,
                      entity_id: str | None = None,
                      period: str | None = None) -> dict[str, Any]:
     """Run the MCP `provenance` tool.
 
-    DCL's provenance tool accepts either a specific triple_id, or
-    (concept, entity_id[, period]) to look up the latest matching triples'
-    sources. Either path returns source_system, source_field, pipe_id,
-    confidence_score per source row.
+    DCL's provenance tool accepts either a specific triple_id (exact), or
+    (concept, property, entity_id[, period]) coordinates — property keeps
+    the composite path exact, since triple identity is (entity, concept,
+    property, period). Either path returns source_system, source_field,
+    pipe_id, confidence_score per source row.
     """
     args: dict[str, Any] = {}
     if triple_id:
         args["triple_id"] = triple_id
     if concept:
         args["concept"] = concept
+    if property:
+        args["property"] = property
     if entity_id:
         args["entity_id"] = entity_id
     if period:

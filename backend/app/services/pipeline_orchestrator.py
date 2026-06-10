@@ -1,12 +1,19 @@
 """Pipeline orchestrator — ported from Platform's operator.py.
 
-Orchestrates the SE pipeline by calling each external service's real
+Orchestrates the AOS pipeline by calling each external service's real
 API endpoints. Supports batch (run all steps) and step-by-step (run
 one step at a time) execution modes.
 
-SE pipeline: Farm Snapshot → AOD Discovery → AOD→AAM Handoff →
-             AAM Inference → DCL Ingest → Verify Data in Ask & Dashboards →
-             Complete
+The spine (one identity pair, minted with the enterprise, threaded
+unchanged through every boundary — I2):
+
+  Enterprise Snapshot (Farm mints entity_id + tenant_id; no DCL push)
+  → Discover (AOD scans the enterprise)
+  → Validation Lab (Farm grades the AOD scan vs ground truth; FAIL gates)
+  → Connect (AOD → AAM candidate handoff, AAM pipe inference)
+  → Transport (AAM pulls plane records, one combined DCL ingest)
+  → Verify Data in Ask & Dashboards (NLQ sees the run)
+  → Complete
 """
 
 import asyncio
@@ -103,16 +110,18 @@ def make_run_name(
 
 def create_se_steps() -> list[PipelineStep]:
     return [
-        PipelineStep(name="farm_snapshot", display_name="Farm Snapshot",
-                     message="Generate enterprise snapshot"),
+        PipelineStep(name="farm_snapshot", display_name="Enterprise Snapshot (Farm)",
+                     message="Stand up the enterprise; mint run identity"),
         PipelineStep(name="aod_discovery", display_name="AOD Discovery",
-                     message="Discover and classify assets"),
+                     message="Scan the enterprise; classify assets"),
+        PipelineStep(name="farm_validation", display_name="Validation Lab Grade",
+                     message="Farm grades AOD scan accuracy vs ground truth"),
         PipelineStep(name="aod_aam_handoff", display_name="AOD → AAM Handoff",
-                     message="Export candidates to AAM"),
+                     message="Export connection candidates to AAM"),
         PipelineStep(name="aam_inference", display_name="AAM Inference",
                      message="Infer pipe definitions"),
-        PipelineStep(name="farm_financials", display_name="DCL Ingest",
-                     message="Generate financial triples"),
+        PipelineStep(name="aam_transport", display_name="AAM Transport → DCL",
+                     message="Pull plane records; one combined DCL ingest"),
         PipelineStep(name="nlq_data_visible",
                      display_name="Verify Data in Ask & Dashboards",
                      message="Confirm NLQ can query and render the new data"),
@@ -151,14 +160,14 @@ async def _execute_step(
             await _step_farm_snapshot(client, step, job, context, t0)
         elif step.name == "aod_discovery":
             await _step_aod_discovery(client, step, job, context, t0)
+        elif step.name == "farm_validation":
+            await _step_farm_validation(client, step, job, context, t0)
         elif step.name == "aod_aam_handoff":
             await _step_aod_aam_handoff(client, step, job, context, t0)
         elif step.name == "aam_inference":
             await _step_aam_inference(client, step, job, context, t0)
-        elif step.name == "farm_financials":
-            await _step_farm_financials(client, step, job, context, t0)
-        elif step.name == "dcl_ingest":
-            await _step_dcl_ingest_verify(client, step, job, context, t0)
+        elif step.name == "aam_transport":
+            await _step_aam_transport(client, step, job, context, t0)
         elif step.name == "nlq_data_visible":
             await _step_nlq_data_visible(client, step, job, context, t0)
         elif step.name == "complete":
@@ -185,14 +194,17 @@ async def _step_farm_snapshot(
     context: dict[str, Any],
     t0: float,
 ) -> None:
-    """SE Step 1: Create Farm snapshot. Farm owns snapshot identity generation
-    (fresh tenant_id + entity_id per snapshot). Farm's entity_id IS the
-    canonical pipeline identity."""
+    """Step 1: Stand up the enterprise (Farm snapshot). Farm owns identity
+    generation (A10): every snapshot mints a fresh I2 pair (entity_id business
+    key + tenant_id UUID, 1:1) that threads unchanged through the whole spine.
+    push_to_dcl=false — in the new spine AAM owns transport; the snapshot is
+    the enterprise standing up, not a DCL write."""
     url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL, "Farm Snapshot")
     cfg = job.config
 
     body: dict[str, Any] = {
         "scale": cfg.get("scale", "medium"),
+        "push_to_dcl": False,
     }
     if cfg.get("seed") is not None:
         body["seed"] = cfg["seed"]
@@ -219,12 +231,20 @@ async def _step_farm_snapshot(
         farm_manifest_id = data.get("farm_manifest_id") or data.get("snapshot_id")
         if farm_manifest_id:
             context["farm_manifest_id"] = farm_manifest_id
-        if data.get("entity_id"):
-            context["entity_id"] = data["entity_id"]
-        if data.get("tenant_name"):
-            context.setdefault("entity_name", data["tenant_name"])
+        if not data.get("entity_id") or not data.get("tenant_id"):
+            _mark_step(step, StepStatus.FAILED,
+                       f"Farm snapshot response missing identity pair "
+                       f"(entity_id={data.get('entity_id')!r}, "
+                       f"tenant_id={data.get('tenant_id')!r}) — every stage "
+                       f"must carry both (I2). No silent fallback.",
+                       data=data, start_time=t0)
+            return
+        context["entity_id"] = data["entity_id"]
+        context["tenant_id"] = data["tenant_id"]
         _update_run_name(job, context)
-        _mark_step(step, StepStatus.SUCCESS, "Snapshot ready",
+        _mark_step(step, StepStatus.SUCCESS,
+                   f"Enterprise up: entity {data['entity_id']} "
+                   f"(fresh identity pair minted)",
                    data=data, start_time=t0)
 
     elif resp.status_code == 202:
@@ -257,12 +277,20 @@ async def _step_farm_snapshot(
                                         or data.get("snapshot_id"))
                     if farm_manifest_id:
                         context["farm_manifest_id"] = farm_manifest_id
-                    if result.get("entity_id"):
-                        context["entity_id"] = result["entity_id"]
-                    if result.get("tenant_name"):
-                        context.setdefault("entity_name", result["tenant_name"])
+                    if not result.get("entity_id") or not result.get("tenant_id"):
+                        _mark_step(step, StepStatus.FAILED,
+                                   f"Farm snapshot job result missing identity "
+                                   f"pair (entity_id={result.get('entity_id')!r}, "
+                                   f"tenant_id={result.get('tenant_id')!r}) — "
+                                   f"every stage must carry both (I2).",
+                                   data=result, start_time=t0)
+                        return
+                    context["entity_id"] = result["entity_id"]
+                    context["tenant_id"] = result["tenant_id"]
                     _update_run_name(job, context)
-                    _mark_step(step, StepStatus.SUCCESS, "Snapshot ready",
+                    _mark_step(step, StepStatus.SUCCESS,
+                               f"Enterprise up: entity {result['entity_id']} "
+                               f"(fresh identity pair minted)",
                                data=result, start_time=t0)
                     return
                 elif poll_status == "failed":
@@ -289,7 +317,8 @@ async def _step_aod_discovery(
     context: dict[str, Any],
     t0: float,
 ) -> None:
-    """SE Step 2: Trigger AOD discovery from Farm snapshot."""
+    """Step 2: Discover — AOD scans the enterprise snapshot. AOS starts here.
+    Carries the snapshot-minted identity pair explicitly (I2)."""
     url = _require_url("AOD_BASE_URL", config.AOD_BASE_URL, "AOD Discovery")
     farm_url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL,
                             "AOD Discovery (Farm URL)")
@@ -304,15 +333,21 @@ async def _step_aod_discovery(
                    "succeed first",
                    start_time=t0)
         return
+    if not tenant_id or not entity_id:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Identity pair missing for AOD Discovery "
+                   f"(tenant_id={tenant_id!r}, entity_id={entity_id!r}) — "
+                   f"the Enterprise Snapshot step mints both (I2). "
+                   f"No silent fallback.",
+                   start_time=t0)
+        return
 
     body: dict[str, Any] = {
         "snapshot_id": farm_manifest_id,
         "farm_base_url": farm_url,
+        "tenant_id": tenant_id,
+        "entity_id": entity_id,
     }
-    if tenant_id:
-        body["tenant_id"] = tenant_id
-    if entity_id:
-        body["entity_id"] = entity_id
 
     try:
         resp = await client.post(f"{url}/api/runs/from-farm",
@@ -347,6 +382,110 @@ async def _step_aod_discovery(
                    start_time=t0)
 
 
+async def _step_farm_validation(
+    client: httpx.AsyncClient,
+    step: PipelineStep,
+    job: PipelineJob,
+    context: dict[str, Any],
+    t0: float,
+) -> None:
+    """Step 3: Validation Lab — Farm grades the AOD scan against its own
+    ground truth (the __expected__ block computed from the snapshot).
+
+    POST /api/reconcile/auto makes Farm pull AOD's results for this
+    (snapshot, tenant) and grade them: PASS / WARN / FAIL.
+    FAIL is a hard gate — a discovery that can't be trusted must not feed
+    Connect/Transport. WARN passes with the grade surfaced loudly.
+    """
+    url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL,
+                       "Validation Lab Grade")
+
+    farm_manifest_id = context.get("farm_manifest_id")
+    tenant_id = context.get("tenant_id")
+    aod_discovery_id = context.get("aod_discovery_id")
+
+    if not farm_manifest_id or not tenant_id:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Cannot grade scan — snapshot/tenant missing "
+                   f"(farm_manifest_id={farm_manifest_id!r}, "
+                   f"tenant_id={tenant_id!r}). Earlier steps must succeed first.",
+                   start_time=t0)
+        return
+    if not aod_discovery_id:
+        _mark_step(step, StepStatus.FAILED,
+                   "No aod_discovery_id available — AOD Discovery step must "
+                   "succeed before its scan can be graded.",
+                   start_time=t0)
+        return
+
+    try:
+        resp = await client.post(
+            f"{url}/api/reconcile/auto",
+            json={"snapshot_id": farm_manifest_id, "tenant_id": tenant_id},
+            headers=_json_headers(),
+        )
+    except httpx.ConnectError:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Could not reach Farm at {url}/api/reconcile/auto — "
+                   f"connection refused. Verify Farm is running.",
+                   start_time=t0)
+        return
+    except httpx.TimeoutException as e:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Validation Lab grading timed out at "
+                   f"{url}/api/reconcile/auto — {e}",
+                   start_time=t0)
+        return
+
+    if resp.status_code != 200:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Validation Lab grading failed ({resp.status_code}): "
+                   f"{_extract_error(resp)}",
+                   start_time=t0)
+        return
+
+    data = resp.json()
+    grade = str(data.get("status") or "").upper()
+    graded_run = data.get("aod_run_id")
+    reconciliation_id = data.get("reconciliation_id")
+    if reconciliation_id:
+        context["reconciliation_id"] = reconciliation_id
+    context["validation_grade"] = grade
+
+    # Provenance cross-check (I3): the grade must be for THIS run's scan.
+    if graded_run and graded_run != aod_discovery_id:
+        _mark_step(step, StepStatus.FAILED,
+                   f"Validation Lab graded a different scan "
+                   f"(aod_run_id={graded_run}) than this run's discovery "
+                   f"({aod_discovery_id}) — provenance mismatch, refusing to "
+                   f"proceed on someone else's grade.",
+                   data=data, start_time=t0)
+        return
+
+    if grade == "FAIL":
+        _mark_step(step, StepStatus.FAILED,
+                   f"Validation Lab graded the AOD scan FAIL — Farm ground "
+                   f"truth exceeds what AOD found. Discovery cannot be "
+                   f"trusted; transport gated. reconciliation_id="
+                   f"{reconciliation_id}",
+                   data=data, start_time=t0)
+        return
+    if grade not in ("PASS", "WARN"):
+        _mark_step(step, StepStatus.FAILED,
+                   f"Validation Lab returned unknown grade {grade!r} "
+                   f"(expected PASS/WARN/FAIL) — refusing to treat unknown "
+                   f"as success.",
+                   data=data, start_time=t0)
+        return
+
+    detail = ("AOD scan matches Farm ground truth" if grade == "PASS"
+              else "scan deviates from Farm ground truth — review scorecard")
+    _mark_step(step, StepStatus.SUCCESS,
+               f"Scan accuracy graded {grade} — {detail} "
+               f"(scan {aod_discovery_id})",
+               data=data, start_time=t0)
+
+
 async def _step_aod_aam_handoff(
     client: httpx.AsyncClient,
     step: PipelineStep,
@@ -354,7 +493,7 @@ async def _step_aod_aam_handoff(
     context: dict[str, Any],
     t0: float,
 ) -> None:
-    """SE Step 3: Export AOD candidates to AAM."""
+    """Step 4: Connect — export AOD connection candidates to AAM."""
     url = _require_url("AOD_BASE_URL", config.AOD_BASE_URL, "AOD-AAM Handoff")
 
     aod_discovery_id = context.get("aod_discovery_id")
@@ -464,181 +603,101 @@ async def _step_aam_inference(
                    start_time=t0)
 
 
-async def _step_farm_financials(
+async def _step_aam_transport(
     client: httpx.AsyncClient,
     step: PipelineStep,
     job: PipelineJob,
     context: dict[str, Any],
     t0: float,
 ) -> None:
-    """SE Step 5: Farm manifest intake for financial triple generation.
+    """Step 6: Transport — AAM pulls every fabric plane's raw records for this
+    run's entity and lands them in ONE combined DCL ingest (records path).
 
-    Pushes triples to DCL.
+    Replaces the retired Farm manifest-intake triples push: AAM owns
+    connectivity + transport (A10); DCL resolves the records into canonical
+    concepts. The run's identity pair is passed explicitly — AAM mints nothing.
     """
-    url = _require_url("FARM_BASE_URL", config.FARM_BASE_URL,
+    url = _require_url("AAM_BASE_URL", config.AAM_BASE_URL,
                        step.display_name)
-    dcl_url = _require_url("DCL_BASE_URL", config.DCL_BASE_URL,
-                           step.display_name)
 
-    cfg = job.config
-    farm_cfg = cfg.get("farm_config", {})
-
-    pipeline_run_id = context.get("pipeline_run_id", job.pipeline_run_id)
-    farm_manifest_id = (context.get("farm_manifest_id")
-                        or farm_cfg.get("farm_manifest_id"))
-    tenant_id = (context.get("tenant_id")
-                 or farm_cfg.get("tenant_id")
-                 or cfg.get("tenant_id")
-                 or config.AOS_TENANT_ID)
-    entity_id = (farm_cfg.get("entity_id")
-                 or context.get("entity_id")
-                 or cfg.get("entity_id"))
-    snapshot_name = (farm_cfg.get("snapshot_name")
-                     or job.run_name
-                     or "latest")
-    pipe_id = farm_cfg.get("pipe_id", f"{step.name}-financials")
-    system = farm_cfg.get("system", "netsuite")
-    category = farm_cfg.get("category", "erp")
-
-    if not entity_id:
+    tenant_id = context.get("tenant_id")
+    entity_id = context.get("entity_id")
+    if not tenant_id or not entity_id:
         _mark_step(step, StepStatus.FAILED,
-                   f"No entity_id available for {step.display_name} — "
-                   f"Farm Snapshot must succeed first.",
+                   f"Identity pair missing for AAM Transport "
+                   f"(tenant_id={tenant_id!r}, entity_id={entity_id!r}) — "
+                   f"the Enterprise Snapshot step mints both (I2). "
+                   f"No silent fallback.",
                    start_time=t0)
         return
 
     body: dict[str, Any] = {
-        "source": {
-            "pipe_id": pipe_id,
-            "system": system,
-            "category": category,
-        },
-        "target": {
-            "dcl_url": f"{dcl_url}/api/dcl/ingest",
-            "tenant_id": tenant_id or "",
-            "snapshot_name": snapshot_name,
-            "entity_id": entity_id,
-            "triples_id": pipeline_run_id,
-        },
-        "farm_manifest_id": farm_manifest_id or pipeline_run_id,
-    }
-
-    _started = job.started_at
-    body["provenance"] = {
-        "triggered_by": "console",
-        "pipeline_run_id": pipeline_run_id,
-        "run_timestamp": _started.isoformat() if hasattr(_started, "isoformat") else str(_started or _now()),
+        "plane": "all",
+        "extra_planes": ["erp", "bi", "ledger"],
+        "tenant_id": tenant_id,
+        "entity_id": entity_id,
     }
 
     try:
-        resp = await client.post(f"{url}/api/farm/manifest-intake",
-                                 json=body, headers=_json_headers())
+        # Full-depth transport (7 planes, one batched ingest + honest
+        # read-back) runs ~30-90s; give it its own ceiling above the
+        # client default.
+        resp = await client.post(f"{url}/api/aam/operator/fabric/run",
+                                 json=body, headers=_json_headers(),
+                                 timeout=300.0)
     except httpx.ConnectError:
         _mark_step(step, StepStatus.FAILED,
-                   f"Could not reach Farm at {url}/api/farm/manifest-intake — "
-                   f"connection refused.",
+                   f"Could not reach AAM at {url}/api/aam/operator/fabric/run "
+                   f"— connection refused. Verify AAM is running.",
                    start_time=t0)
         return
     except httpx.TimeoutException as e:
         _mark_step(step, StepStatus.FAILED,
-                   f"Farm financial generation timed out at "
-                   f"{url}/api/farm/manifest-intake — {e}",
+                   f"AAM transport timed out at "
+                   f"{url}/api/aam/operator/fabric/run — {e}",
                    start_time=t0)
         return
 
-    if resp.status_code == 200:
-        data = resp.json()
-        farm_status = data.get("status", "completed")
-        if farm_status not in ("completed", "skipped"):
-            push = data.get("push_result") or {}
-            error_detail = push.get("error") or farm_status
-            _mark_step(step, StepStatus.FAILED,
-                       f"DCL ingest failed (Farm status={farm_status}): {error_detail}",
-                       data=data, start_time=t0)
-            return
-
-        rows = data.get("rows_generated", 0)
-        push = data.get("push_result") or {}
-        accepted = push.get("rows_accepted")
-        triples_written = push.get("triples_written") or accepted or rows
-        source_rows = data.get("source_rows") or rows
-
-        dcl_ingest_id = (data.get("dcl_ingest_id")
-                         or push.get("dcl_ingest_id")
-                         or push.get("dcl_run_id"))
-        if dcl_ingest_id:
-            context["dcl_ingest_id"] = dcl_ingest_id
-            context.setdefault("dcl_ingest_ids", []).append(dcl_ingest_id)
-
-        source_farm = (data.get("source_farm_manifest_id")
-                       or push.get("source_farm_manifest_id"))
-        if source_farm:
-            context["source_farm_manifest_id"] = source_farm
-
-        context["source_rows"] = source_rows
-        context["triples_written"] = triples_written
-        if source_rows and source_rows > 0:
-            context["expansion_factor"] = round(triples_written / source_rows, 1)
-
-        if accepted is not None and accepted != rows:
-            triples_label = f"{accepted} accepted"
-        else:
-            triples_label = str(rows)
-        _mark_step(step, StepStatus.SUCCESS,
-                   f"Financial triples generated: {triples_label}",
-                   data=data, start_time=t0)
-    else:
+    if resp.status_code != 200:
         _mark_step(step, StepStatus.FAILED,
-                   f"Farm financials failed ({resp.status_code}): "
+                   f"AAM transport failed ({resp.status_code}): "
                    f"{_extract_error(resp)}",
                    start_time=t0)
+        return
 
+    data = resp.json()
+    planes = data.get("planes") or []
+    failed = [p for p in planes if not p.get("ok")]
+    if failed or not data.get("ok") or not planes:
+        errors = "; ".join(
+            f"{p.get('plane')}: {p.get('error', 'unknown error')}"
+            for p in failed
+        ) or "no planes returned"
+        _mark_step(step, StepStatus.FAILED,
+                   f"AAM transport failed for "
+                   f"{len(failed) or 'all'} plane(s) — {errors}",
+                   data=data, start_time=t0)
+        return
 
-async def _step_dcl_ingest_verify(
-    client: httpx.AsyncClient,
-    step: PipelineStep,
-    job: PipelineJob,
-    context: dict[str, Any],
-    t0: float,
-) -> None:
-    """Verify triples landed in DCL."""
-    url = _require_url("DCL_BASE_URL", config.DCL_BASE_URL, "DCL Ingest Verify")
+    records_total = sum(int(p.get("records") or 0) for p in planes)
+    concept_names: set[str] = set()
+    for p in planes:
+        concept_names.update((p.get("concepts") or {}).keys())
+    dcl_ingest_id = planes[0].get("dcl_ingest_id")
 
-    params: dict[str, str] = {}
-    dcl_ingest_id = context.get("dcl_ingest_id")
     if dcl_ingest_id:
-        params["dcl_ingest_id"] = dcl_ingest_id
+        context["dcl_ingest_id"] = dcl_ingest_id
+        context.setdefault("dcl_ingest_ids", []).append(dcl_ingest_id)
+    context["records_transported"] = records_total
+    context["planes_run"] = len(planes)
+    context["concepts_distinct"] = len(concept_names)
 
-    try:
-        resp = await client.get(f"{url}/api/dcl/triples/overview",
-                                headers=_json_headers(), params=params)
-    except httpx.ConnectError:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Could not reach DCL at {url}/api/dcl/triples/overview — "
-                   f"connection refused. Verify DCL is running.",
-                   start_time=t0)
-        return
-    except httpx.TimeoutException as e:
-        _mark_step(step, StepStatus.FAILED,
-                   f"DCL request timed out at "
-                   f"{url}/api/dcl/triples/overview — {e}",
-                   start_time=t0)
-        return
-
-    if resp.status_code == 200:
-        data = resp.json()
-        verify_id = data.get("verify_id")
-        if verify_id:
-            context["verify_id"] = verify_id
-        total = data.get("total_triples", data.get("count", 0))
-        _mark_step(step, StepStatus.SUCCESS,
-                   f"DCL has {total:,} triples",
-                   data=data, start_time=t0)
-    else:
-        _mark_step(step, StepStatus.FAILED,
-                   f"DCL triple check failed ({resp.status_code}): "
-                   f"{_extract_error(resp)}",
-                   start_time=t0)
+    _mark_step(step, StepStatus.SUCCESS,
+               f"Transported {records_total:,} records across {len(planes)} "
+               f"planes → one DCL ingest "
+               f"({str(dcl_ingest_id)[:8]}), {len(concept_names)} distinct "
+               f"concepts resolved",
+               data=data, start_time=t0)
 
 
 async def _step_nlq_data_visible(
@@ -870,15 +929,10 @@ def _step_complete(
         "entity_id": context.get("entity_id"),
     }
 
-    source_rows = context.get("source_rows")
-    triples_written = context.get("triples_written")
-    expansion_factor = context.get("expansion_factor")
-    if source_rows is not None:
-        summary["source_rows"] = source_rows
-    if triples_written is not None:
-        summary["triples_written"] = triples_written
-    if expansion_factor is not None:
-        summary["expansion_factor"] = expansion_factor
+    for key in ("validation_grade", "records_transported", "planes_run",
+                "concepts_distinct", "dcl_ingest_id"):
+        if context.get(key) is not None:
+            summary[key] = context[key]
 
     if failed > 0:
         _mark_step(step, StepStatus.SUCCESS,
@@ -922,9 +976,11 @@ async def run_pipeline_batch(pipeline_run_id: str) -> None:
     job.status = "running"
 
     async with httpx.AsyncClient(timeout=240.0) as client:
+        # Identity is NOT seeded from the environment: the Enterprise Snapshot
+        # step mints the run's pair (I2) and every later step requires it.
+        # A missing pair fails the step loudly — no env-tenant fallback (I6).
         context: dict[str, Any] = {
             "pipeline_run_id": pipeline_run_id,
-            "tenant_id": config.AOS_TENANT_ID,
         }
 
         i = 0
@@ -1000,14 +1056,13 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
     context: dict[str, Any] = {
         "pipeline_run_id": job.pipeline_run_id,
     }
-    # Carry identity from job config first (set at pipeline start from registry)
+    # Carry identity from job config first (set at pipeline start from registry).
+    # No env-tenant fallback: the Enterprise Snapshot step mints the pair (I2)
+    # and replaying completed steps below recovers it.
     cfg = job.config
     for key in ("tenant_id", "entity_id", "entity_name"):
         if cfg.get(key):
             context[key] = cfg[key]
-
-    if not context.get("tenant_id"):
-        context["tenant_id"] = config.AOS_TENANT_ID
 
     for s in job.steps:
         if s.data and s.status == StepStatus.SUCCESS:
@@ -1016,20 +1071,33 @@ def _extract_job_context(job: PipelineJob) -> dict[str, Any]:
                 context["farm_manifest_id"] = s.data["farm_manifest_id"]
             elif "snapshot_id" in s.data:
                 context["farm_manifest_id"] = s.data["snapshot_id"]
-            if s.name == "farm_snapshot":
-                if "entity_id" in s.data:
-                    context["entity_id"] = s.data["entity_id"]
-            else:
-                if "tenant_id" in s.data:
-                    context["tenant_id"] = s.data["tenant_id"]
-                if "entity_id" in s.data:
-                    context["entity_id"] = s.data["entity_id"]
+            if "tenant_id" in s.data:
+                context["tenant_id"] = s.data["tenant_id"]
+            if "entity_id" in s.data:
+                context["entity_id"] = s.data["entity_id"]
             if "aod_discovery_id" in s.data:
                 context["aod_discovery_id"] = s.data["aod_discovery_id"]
+            if "reconciliation_id" in s.data:
+                context["reconciliation_id"] = s.data["reconciliation_id"]
+            if s.name == "farm_validation" and "status" in s.data:
+                context["validation_grade"] = str(s.data["status"]).upper()
             if "handoff_id" in s.data:
                 context["handoff_id"] = s.data["handoff_id"]
             if "aam_inference_id" in s.data:
                 context["aam_inference_id"] = s.data["aam_inference_id"]
+            if s.name == "aam_transport":
+                planes = s.data.get("planes") or []
+                context["records_transported"] = sum(
+                    int(p.get("records") or 0) for p in planes)
+                context["planes_run"] = len(planes)
+                names: set[str] = set()
+                for p in planes:
+                    names.update((p.get("concepts") or {}).keys())
+                context["concepts_distinct"] = len(names)
+                if planes and planes[0].get("dcl_ingest_id"):
+                    _tid = planes[0]["dcl_ingest_id"]
+                    context.setdefault("dcl_ingest_ids", []).append(_tid)
+                    context["dcl_ingest_id"] = _tid
             _dcl_id = s.data.get("dcl_ingest_id")
             if not _dcl_id:
                 _push = s.data.get("push_result") or {}

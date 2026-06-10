@@ -1,4 +1,4 @@
-// Operator-visible outcome: After running the SE pipeline on /pipeline, the "Verify Data in Ask & Dashboards" step card succeeds with the message "Data visible in NLQ — Ask answered ... from DCL". With nlq-backend stopped, the same step card surfaces a plain-English failure containing "NLQ pipeline status unreachable" or "connection refused" referencing port 8005.
+// Operator-visible outcome: After running the spine on /pipeline, the "Validation Lab Grade" card shows "Scan accuracy graded PASS" (or WARN) and the "Verify Data in Ask & Dashboards" card succeeds with "Data visible in NLQ — Ask answered <number> from DCL" for the run's freshly minted entity. With nlq-backend stopped, the same Verify card surfaces a plain-English failure containing "NLQ pipeline status unreachable" or "connection refused" referencing port 8005.
 import { test, expect, type Page } from '@playwright/test'
 import { execSync } from 'child_process'
 
@@ -29,9 +29,9 @@ async function waitForStepStatus(
   }
 }
 
-test.describe('SE verify step — green path (NLQ data visible)', () => {
-  test('full SE pipeline ends with Verify Data in Ask & Dashboards SUCCESS', async ({ page }) => {
-    test.setTimeout(300_000) // Farm push can take 2-3 min under load
+test.describe('Spine verify step — green path (NLQ data visible)', () => {
+  test('full spine run ends with graded scan and Verify Data in Ask & Dashboards SUCCESS', async ({ page }) => {
+    test.setTimeout(420_000) // full spine incl. 7-plane AAM transport
     await page.goto('/pipeline')
     const m = main(page)
 
@@ -43,7 +43,13 @@ test.describe('SE verify step — green path (NLQ data visible)', () => {
 
     await expect(
       m.getByText(/Pipeline completed|Pipeline stopped/).first(),
-    ).toBeVisible({ timeout: 270_000 })
+    ).toBeVisible({ timeout: 390_000 })
+
+    // The Validation Lab gate must have graded this run's scan (PASS or WARN
+    // — FAIL stops the pipeline and fails the assertion below).
+    await expect(
+      m.getByText(/Scan accuracy graded (PASS|WARN)/).first(),
+    ).toBeVisible({ timeout: 5_000 })
 
     await waitForStepStatus(page, 'success', 5_000)
 
@@ -58,7 +64,7 @@ test.describe('SE verify step — green path (NLQ data visible)', () => {
   })
 })
 
-test.describe('SE verify step — force-fail (nlq-backend down)', () => {
+test.describe('Spine verify step — force-fail (nlq-backend down)', () => {
   test.afterEach(() => {
     try {
       pm2('start', 'nlq-backend')
@@ -67,8 +73,8 @@ test.describe('SE verify step — force-fail (nlq-backend down)', () => {
     }
   })
 
-  test('SE pipeline with nlq-backend stopped shows verify step FAILED with plain-English message', async ({ page }) => {
-    test.setTimeout(300_000)
+  test('spine run with nlq-backend stopped shows verify step FAILED with plain-English message', async ({ page }) => {
+    test.setTimeout(420_000)
 
     pm2('stop', 'nlq-backend')
 
@@ -83,7 +89,7 @@ test.describe('SE verify step — force-fail (nlq-backend down)', () => {
 
     await expect(
       m.getByText(/Pipeline completed|Pipeline stopped/).first(),
-    ).toBeVisible({ timeout: 270_000 })
+    ).toBeVisible({ timeout: 390_000 })
 
     await expect(
       m
