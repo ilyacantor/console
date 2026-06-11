@@ -70,6 +70,10 @@ const TOUR: NavSection = {
     { label: 'Consumption', path: '/consumption', color: '#0BCAD9', indent: true },
     { label: 'contextOS', path: '/contextos/config', color: '#0BCAD9', indent: true },
     { label: 'Tour recap', path: '/tour/recap', color: '#0BCAD9', indent: true },
+    // Launch point only — the grounded-agent before/after demo lives in DCL
+    // (wrapper renders captured sequence runs; deep link accepts
+    // ?view=demo&entity_id=… for entity context). No demo logic in Console.
+    { label: 'Grounded agent', path: '', color: '#0BCAD9', external: 'http://localhost:3004/?view=demo' },
   ],
 }
 
