@@ -129,14 +129,17 @@ export const STAGE_BY_ID: Record<StageId, Stage> = Object.fromEntries(
   STAGES.map((s) => [s.id, s]),
 ) as Record<StageId, Stage>
 
+// STAGES is a non-empty literal sequence; FIRST_STAGE is its canonical entry stage.
+export const FIRST_STAGE: Stage = STAGES[0]!
+
 export function stageBefore(id: StageId): Stage | null {
   const s = STAGE_BY_ID[id]
-  return s.ordinal > 1 ? STAGES[s.ordinal - 2] : null
+  return s.ordinal > 1 ? (STAGES[s.ordinal - 2] ?? null) : null
 }
 
 export function stageAfter(id: StageId): Stage | null {
   const s = STAGE_BY_ID[id]
-  return s.ordinal < STAGES.length ? STAGES[s.ordinal] : null
+  return s.ordinal < STAGES.length ? (STAGES[s.ordinal] ?? null) : null
 }
 
 // ===========================================================================
@@ -392,6 +395,9 @@ export const SEED_PIPES: SeedPipe[] = [
   { pipe_id: 'direct-bill-rest', display_name: 'Crestline Billing REST (direct)', vendor: 'In-house', source_system: 'Crestline Billing API', fabric_plane: 'Direct', modality: 'REST', identity_keys: ['invoice_id'], introduced_at_stage_ordinal: 4 },
   { pipe_id: 'direct-bill-ws', display_name: 'Crestline Billing WebSocket (direct)', vendor: 'In-house', source_system: 'Crestline Billing API', fabric_plane: 'Direct', modality: 'WebSocket', identity_keys: ['session_id'], introduced_at_stage_ordinal: 4 },
 ]
+
+// SEED_PIPES is a non-empty literal; FIRST_PIPE is the default transport selection.
+export const FIRST_PIPE: SeedPipe = SEED_PIPES[0]!
 
 export const FABRIC_PIPE_COUNT_TOTAL = 78
 export const DIRECT_PIPE_COUNT_TOTAL = 4

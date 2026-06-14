@@ -22,6 +22,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   STAGES,
   STAGE_BY_ID,
+  FIRST_STAGE,
   stageAfter,
   stageBefore,
   type Stage,
@@ -61,7 +62,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
       if (stageParam && stageParam in STAGE_BY_ID) {
         setActiveStageId(stageParam as StageId)
       } else if (activeStageId === null) {
-        setActiveStageId(STAGES[0].id)
+        setActiveStageId(FIRST_STAGE.id)
       }
     } else if (activeStageId !== null) {
       setActiveStageId(null)
@@ -105,7 +106,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
 
   const enterTour = useCallback(
     (stageId?: StageId) => {
-      const target = stageId ?? STAGES[0].id
+      const target = stageId ?? FIRST_STAGE.id
       setActiveStageId(target)
       goToStageRoute(target)
     },

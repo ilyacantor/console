@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { SEED_PIPES, type Modality, type SeedPipe } from '../demo/seed'
+import { SEED_PIPES, FIRST_PIPE, type Modality, type SeedPipe } from '../demo/seed'
 
 interface TransportFlowProps {
   selectedPipeId: string | null
@@ -16,7 +16,7 @@ interface TransportFlowProps {
 }
 
 export default function TransportFlow({ selectedPipeId, onSelectPipe }: TransportFlowProps) {
-  const selected = SEED_PIPES.find((p) => p.pipe_id === selectedPipeId) ?? SEED_PIPES[0]
+  const selected = SEED_PIPES.find((p) => p.pipe_id === selectedPipeId) ?? FIRST_PIPE
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
