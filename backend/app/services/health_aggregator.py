@@ -20,6 +20,13 @@ SERVICES = [
     ("Convergence", config.CONVERGENCE_BASE_URL, "/api/health"),
 ]
 
+# The real DCL ingest target (local :8104 dev process). Distinct from the
+# :8004 health-only DCL above. Without this probe a dead :8104 read as healthy
+# and hid the AAM Transport → DCL outage. Only added when it's a separate host
+# (local two-process split); in prod the single DCL is already covered above.
+if config.DCL_INGEST_BASE_URL and config.DCL_INGEST_BASE_URL != config.DCL_BASE_URL:
+    SERVICES.append(("DCL Ingest", config.DCL_INGEST_BASE_URL, "/api/health"))
+
 STANDALONE_URLS = {
     "AOD": config.AOD_BASE_URL,
     "AAM": config.AAM_BASE_URL,
@@ -61,7 +68,7 @@ async def _check_one(
         if resp.status_code == 200:
             # For DCL: HTTP 200 is not enough — inspect functional readiness fields.
             # DCL always returns 200 even in degraded/warming state with no graph.
-            if name == "DCL":
+            if name.startswith("DCL"):
                 body: dict = {}
                 try:
                     body = resp.json()

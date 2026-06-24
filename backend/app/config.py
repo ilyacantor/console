@@ -22,6 +22,13 @@ AOD_BASE_URL: str = os.environ.get("AOD_BASE_URL", "http://localhost:8001").rstr
 AAM_BASE_URL: str = os.environ.get("AAM_BASE_URL", "http://localhost:8002").rstrip("/")
 FARM_BASE_URL: str = os.environ.get("FARM_BASE_URL", "http://localhost:8003").rstrip("/")
 DCL_BASE_URL: str = os.environ.get("DCL_BASE_URL", "http://localhost:8004").rstrip("/")
+# Local DCL runs as two processes: :8004 (prod .env, health-only) and :8104
+# (dev .env — the real ingest target AAM transports to). Probing only :8004 let
+# a dead :8104 read as healthy and masked the AAM Transport → DCL outage. Probe
+# the ingest DCL too. Auto-derived locally; in prod (single DCL) it stays empty.
+DCL_INGEST_BASE_URL: str = os.environ.get("DCL_INGEST_BASE_URL", "").rstrip("/")
+if not DCL_INGEST_BASE_URL and ":8004" in DCL_BASE_URL:
+    DCL_INGEST_BASE_URL = DCL_BASE_URL.replace(":8004", ":8104")
 NLQ_BASE_URL: str = os.environ.get("NLQ_BASE_URL", "http://localhost:8005").rstrip("/")
 PLATFORM_BASE_URL: str = os.environ.get("PLATFORM_BASE_URL", "http://localhost:8006").rstrip("/")
 CONVERGENCE_BASE_URL: str = os.environ.get("CONVERGENCE_BASE_URL", "http://localhost:8010").rstrip("/")
