@@ -1,4 +1,4 @@
-// Operator-visible outcome: Clicking Run on /pipeline renders all 8 spine step cards (Enterprise Snapshot (Farm) → AOD Discovery → Validation Lab Grade → AOD → AAM Handoff → AAM Inference → AAM Transport → DCL → Verify Data in Ask & Dashboards → Pipeline Complete) and finishes with "Pipeline completed successfully"; the footer shows an I5 run_name like FluxEdge-a3f2-9c1b; the transport summary's erp/bi/ledger plane record counts equal Farm's financial/operational/ledger record counts fetched at test time (e.g. erp=12, bi=48, ledger=200 for that entity, seed 42); the Validation Lab card shows the same PASS/WARN grade Farm's stored reconciliation reports; the run survives reload in Run History.
+// Operator-visible outcome: Clicking Run on /pipeline renders all 7 spine step cards (Enterprise Snapshot (Farm) → AOD Discovery → Validation Lab Grade → AOD → AAM Handoff → AAM Transport → DCL → Verify Data in Ask & Dashboards → Pipeline Complete) and finishes with "Pipeline completed successfully"; the footer shows an I5 run_name like FluxEdge-a3f2-9c1b; the transport summary's erp/bi/ledger plane record counts equal Farm's financial/operational/ledger record counts fetched at test time (e.g. erp=12, bi=48, ledger=200 for that entity, seed 42); the Validation Lab card shows the same PASS/WARN grade Farm's stored reconciliation reports; the run survives reload in Run History.
 import { test, expect, type Page } from '@playwright/test'
 
 const FARM_BASE_URL = process.env.FARM_BASE_URL || 'http://localhost:8003'
@@ -41,18 +41,17 @@ test.describe('Pipeline page — structure', () => {
 
 test.describe('Pipeline spine — full batch run vs ground truth', () => {
   test('8 step cards render; transport records and validation grade match Farm at test time', async ({ page }) => {
-    test.setTimeout(420_000) // snapshot + scan + grade + handoff + infer + 7-plane transport + verify
+    test.setTimeout(420_000) // snapshot + scan + grade + handoff + 7-plane transport + verify
     await page.goto('/pipeline')
     const m = main(page)
 
     await m.getByRole('button', { name: /^Run$/ }).click()
 
-    // All 8 spine cards appear as soon as the job exists.
+    // All 7 spine cards appear as soon as the job exists.
     await expect(m.getByText('Enterprise Snapshot (Farm)').first()).toBeVisible({ timeout: 10_000 })
     await expect(m.getByText('AOD Discovery').first()).toBeVisible({ timeout: 10_000 })
     await expect(m.getByText('Validation Lab Grade').first()).toBeVisible({ timeout: 10_000 })
     await expect(m.getByText('AAM Handoff', { exact: false }).first()).toBeVisible({ timeout: 10_000 })
-    await expect(m.getByText('AAM Inference').first()).toBeVisible({ timeout: 10_000 })
     await expect(m.getByText('AAM Transport → DCL').first()).toBeVisible({ timeout: 10_000 })
     await expect(m.getByText('Verify Data in Ask & Dashboards').first()).toBeVisible({ timeout: 10_000 })
     await expect(m.getByText('Pipeline Complete').first()).toBeVisible({ timeout: 10_000 })

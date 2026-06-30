@@ -118,8 +118,6 @@ def create_se_steps() -> list[PipelineStep]:
                      message="Farm grades AOD scan accuracy vs ground truth"),
         PipelineStep(name="aod_aam_handoff", display_name="AOD → AAM Handoff",
                      message="Export connection candidates to AAM"),
-        PipelineStep(name="aam_inference", display_name="AAM Inference",
-                     message="Infer pipe definitions"),
         PipelineStep(name="aam_transport", display_name="AAM Transport → DCL",
                      message="Pull plane records; one combined DCL ingest"),
         PipelineStep(name="nlq_data_visible",
@@ -164,8 +162,6 @@ async def _execute_step(
             await _step_farm_validation(client, step, job, context, t0)
         elif step.name == "aod_aam_handoff":
             await _step_aod_aam_handoff(client, step, job, context, t0)
-        elif step.name == "aam_inference":
-            await _step_aam_inference(client, step, job, context, t0)
         elif step.name == "aam_transport":
             await _step_aam_transport(client, step, job, context, t0)
         elif step.name == "nlq_data_visible":
@@ -543,62 +539,6 @@ async def _step_aod_aam_handoff(
     else:
         _mark_step(step, StepStatus.FAILED,
                    f"AOD-AAM handoff failed ({resp.status_code}): "
-                   f"{_extract_error(resp)}",
-                   start_time=t0)
-
-
-async def _step_aam_inference(
-    client: httpx.AsyncClient,
-    step: PipelineStep,
-    job: PipelineJob,
-    context: dict[str, Any],
-    t0: float,
-) -> None:
-    """SE Step 4: Trigger AAM pipe inference."""
-    url = _require_url("AAM_BASE_URL", config.AAM_BASE_URL, "AAM Inference")
-
-    body: dict[str, Any] = {}
-    handoff_id = context.get("handoff_id")
-    tenant_id = context.get("tenant_id")
-    entity_id = context.get("entity_id")
-    if handoff_id:
-        body["handoff_id"] = handoff_id
-    if tenant_id:
-        body["tenant_id"] = tenant_id
-    if entity_id:
-        body["entity_id"] = entity_id
-
-    try:
-        resp = await client.post(f"{url}/api/aam/infer",
-                                 json=body, headers=_json_headers())
-    except httpx.ConnectError:
-        _mark_step(step, StepStatus.FAILED,
-                   f"Could not reach AAM at {url}/api/aam/infer — "
-                   f"connection refused. Verify AAM is running.",
-                   start_time=t0)
-        return
-    except httpx.TimeoutException as e:
-        _mark_step(step, StepStatus.FAILED,
-                   f"AAM inference timed out at {url}/api/aam/infer — {e}",
-                   start_time=t0)
-        return
-
-    if resp.status_code == 200:
-        data = resp.json()
-        # Capture namespaced ID from AAM
-        aam_inference_id = data.get("aam_inference_id")
-        if aam_inference_id:
-            context["aam_inference_id"] = aam_inference_id
-        source_handoff = data.get("source_handoff_id")
-        if source_handoff:
-            context["source_handoff_id"] = source_handoff
-        pipes = data.get("pipes_created", data.get("pipe_count", "?"))
-        _mark_step(step, StepStatus.SUCCESS,
-                   f"Inference complete: {pipes} pipes",
-                   data=data, start_time=t0)
-    else:
-        _mark_step(step, StepStatus.FAILED,
-                   f"AAM inference failed ({resp.status_code}): "
                    f"{_extract_error(resp)}",
                    start_time=t0)
 
